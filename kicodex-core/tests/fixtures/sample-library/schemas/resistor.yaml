@@ -1,0 +1,14 @@
+inherits: _base
+fields:
+  resistance:
+    display_name: "Resistance"
+    required: true
+  tolerance:
+    display_name: "Tolerance"
+    required: false
+  power_rating:
+    display_name: "Power Rating"
+    required: false
+  package:
+    display_name: "Package"
+    required: true

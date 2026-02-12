@@ -1,0 +1,15 @@
+[package]
+name = "kicodex-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "kicodex"
+path = "src/main.rs"
+
+[dependencies]
+kicodex-core = { path = "../kicodex-core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"

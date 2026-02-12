@@ -1,0 +1,67 @@
+use serde::Deserialize;
+use std::path::Path;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum LibraryError {
+    #[error("failed to read library.yaml: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("failed to parse library.yaml: {0}")]
+    Yaml(#[from] serde_yml::Error),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibraryManifest {
+    pub name: String,
+    pub schemas_path: String,
+    pub tables: Vec<TableDef>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TableDef {
+    pub file: String,
+    pub schema: String,
+    pub name: String,
+}
+
+/// Load library.yaml from the given library root directory.
+pub fn load_library_manifest(library_root: &Path) -> Result<LibraryManifest, LibraryError> {
+    let manifest_path = library_root.join("library.yaml");
+    let content = std::fs::read_to_string(&manifest_path)?;
+    let manifest: LibraryManifest = serde_yml::from_str(&content)?;
+    Ok(manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_load_library_manifest() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("library.yaml"),
+            r#"name: "My Components Library"
+schemas_path: schemas
+tables:
+  - file: data/resistors.csv
+    schema: resistor
+    name: "Resistors"
+  - file: data/capacitors.csv
+    schema: capacitor
+    name: "Capacitors"
+"#,
+        )
+        .unwrap();
+
+        let manifest = load_library_manifest(tmp.path()).unwrap();
+        assert_eq!(manifest.name, "My Components Library");
+        assert_eq!(manifest.schemas_path, "schemas");
+        assert_eq!(manifest.tables.len(), 2);
+        assert_eq!(manifest.tables[0].file, "data/resistors.csv");
+        assert_eq!(manifest.tables[0].schema, "resistor");
+        assert_eq!(manifest.tables[0].name, "Resistors");
+    }
+}

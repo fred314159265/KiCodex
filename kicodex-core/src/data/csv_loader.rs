@@ -1,0 +1,250 @@
+use indexmap::IndexMap;
+use std::collections::HashSet;
+use std::path::Path;
+use thiserror::Error;
+use tracing::warn;
+
+#[derive(Debug, Error)]
+pub enum CsvError {
+    #[error("failed to read CSV file: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("CSV parsing error: {0}")]
+    Csv(#[from] csv::Error),
+    #[error("CSV file has no headers")]
+    NoHeaders,
+}
+
+/// A single row of CSV data, preserving column order via IndexMap.
+pub type CsvRow = IndexMap<String, String>;
+
+/// Load a CSV file, ensuring every row has a unique `id`.
+/// Missing or duplicate IDs are auto-assigned and written back to disk.
+pub fn load_csv_with_ids(path: &Path) -> Result<Vec<CsvRow>, CsvError> {
+    let content = std::fs::read_to_string(path)?;
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(content.as_bytes());
+
+    let headers: Vec<String> = reader
+        .headers()
+        .map_err(CsvError::Csv)?
+        .iter()
+        .map(|h| h.to_string())
+        .collect();
+
+    if headers.is_empty() {
+        return Err(CsvError::NoHeaders);
+    }
+
+    let has_id_column = headers.iter().any(|h| h == "id");
+
+    let mut rows: Vec<CsvRow> = Vec::new();
+    for result in reader.records() {
+        let record = result?;
+        let mut row = IndexMap::new();
+        for (i, header) in headers.iter().enumerate() {
+            let value = record.get(i).unwrap_or("").to_string();
+            row.insert(header.clone(), value);
+        }
+        rows.push(row);
+    }
+
+    // Find the next integer ID by scanning existing IDs
+    let mut used_ids: HashSet<String> = HashSet::new();
+    let mut max_int_id: u64 = 0;
+    let mut needs_writeback = false;
+
+    if has_id_column {
+        for row in &rows {
+            if let Some(id) = row.get("id") {
+                if !id.is_empty() {
+                    if let Ok(n) = id.parse::<u64>() {
+                        max_int_id = max_int_id.max(n);
+                    }
+                    used_ids.insert(id.clone());
+                }
+            }
+        }
+    }
+
+    let mut next_id = max_int_id + 1;
+
+    // Assign IDs to rows that don't have one, or have duplicates
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    for row in &mut rows {
+        if !has_id_column {
+            // Need to insert id as first column
+            needs_writeback = true;
+            let id = next_id.to_string();
+            next_id += 1;
+
+            // Rebuild row with id first
+            let mut new_row = IndexMap::new();
+            new_row.insert("id".to_string(), id.clone());
+            for (k, v) in row.iter() {
+                new_row.insert(k.clone(), v.clone());
+            }
+            *row = new_row;
+            seen_ids.insert(id);
+        } else {
+            let id = row.get("id").cloned().unwrap_or_default();
+            if id.is_empty() || seen_ids.contains(&id) {
+                if !id.is_empty() {
+                    warn!("duplicate id '{}' detected, assigning new id", id);
+                }
+                let new_id = loop {
+                    let candidate = next_id.to_string();
+                    next_id += 1;
+                    if !used_ids.contains(&candidate) {
+                        break candidate;
+                    }
+                };
+                used_ids.insert(new_id.clone());
+                row.insert("id".to_string(), new_id.clone());
+                seen_ids.insert(new_id);
+                needs_writeback = true;
+            } else {
+                seen_ids.insert(id);
+            }
+        }
+    }
+
+    if needs_writeback {
+        write_csv(path, &rows)?;
+    }
+
+    Ok(rows)
+}
+
+/// Write rows back to a CSV file using temp file + rename for safety.
+fn write_csv(path: &Path, rows: &[CsvRow]) -> Result<(), CsvError> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let headers: Vec<String> = rows[0].keys().cloned().collect();
+
+    // Write to a temp file in the same directory, then rename
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let temp_path = parent.join(format!(
+        ".{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+
+    let mut writer = csv::WriterBuilder::new().from_path(&temp_path)?;
+    writer.write_record(&headers)?;
+
+    for row in rows {
+        let record: Vec<&str> = headers
+            .iter()
+            .map(|h| row.get(h).map(|s| s.as_str()).unwrap_or(""))
+            .collect();
+        writer.write_record(&record)?;
+    }
+
+    writer.flush()?;
+    drop(writer);
+
+    std::fs::rename(&temp_path, path)?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_load_csv_with_existing_ids() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        fs::write(
+            &csv_path,
+            "id,mpn,value\n1,RC0603FR-0710KL,10K\n2,RC0603FR-07100KL,100K\n",
+        )
+        .unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], "1");
+        assert_eq!(rows[1]["id"], "2");
+
+        // File should not have been rewritten (no changes needed)
+        let content = fs::read_to_string(&csv_path).unwrap();
+        assert!(content.contains("1,RC0603FR-0710KL,10K"));
+    }
+
+    #[test]
+    fn test_load_csv_assigns_missing_ids() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        fs::write(
+            &csv_path,
+            "id,mpn,value\n1,RC0603FR-0710KL,10K\n,RC0603FR-07100KL,100K\n",
+        )
+        .unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], "1");
+        assert_eq!(rows[1]["id"], "2"); // auto-assigned
+
+        // Verify writeback
+        let content = fs::read_to_string(&csv_path).unwrap();
+        assert!(content.contains("2,RC0603FR-07100KL,100K"));
+    }
+
+    #[test]
+    fn test_load_csv_handles_duplicate_ids() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        fs::write(
+            &csv_path,
+            "id,mpn,value\n1,RC0603FR-0710KL,10K\n1,RC0603FR-07100KL,100K\n",
+        )
+        .unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], "1");
+        assert_ne!(rows[1]["id"], "1"); // should get a new id
+    }
+
+    #[test]
+    fn test_load_csv_without_id_column() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        fs::write(
+            &csv_path,
+            "mpn,value\nRC0603FR-0710KL,10K\nRC0603FR-07100KL,100K\n",
+        )
+        .unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(!rows[0]["id"].is_empty());
+        assert!(!rows[1]["id"].is_empty());
+
+        // id should be first column
+        let keys: Vec<&String> = rows[0].keys().collect();
+        assert_eq!(keys[0], "id");
+
+        // Verify writeback includes id column
+        let content = fs::read_to_string(&csv_path).unwrap();
+        assert!(content.starts_with("id,mpn,value"));
+    }
+
+    #[test]
+    fn test_round_trip_preserves_data() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        let original = "id,mpn,value,description\n1,RC0603FR-0710KL,10K,\"RES 10K OHM 1% 1/10W 0603\"\n2,RC0603FR-07100KL,100K,\"RES 100K OHM 1% 1/10W 0603\"\n";
+        fs::write(&csv_path, original).unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows[0]["description"], "RES 10K OHM 1% 1/10W 0603");
+        assert_eq!(rows[1]["description"], "RES 100K OHM 1% 1/10W 0603");
+    }
+}

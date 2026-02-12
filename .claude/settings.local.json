@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:dev-docs.kicad.org)",
+      "WebFetch(domain:gitlab.com)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(curl:*)",
+      "Bash(python:*)",
+      "Bash(cargo run:*)",
+      "Bash(echo:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

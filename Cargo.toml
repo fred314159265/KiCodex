@@ -1,0 +1,3 @@
+[workspace]
+members = ["kicodex-core", "kicodex-cli"]
+resolver = "2"

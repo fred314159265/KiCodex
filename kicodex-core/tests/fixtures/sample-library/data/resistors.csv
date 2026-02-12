@@ -1,0 +1,4 @@
+id,mpn,manufacturer,description,value,symbol,footprint,datasheet,reference,resistance,tolerance,power_rating,package
+1,RC0603FR-0710KL,Yageo,RES 10K OHM 1% 1/10W 0603,10K,Device:R,Resistor_SMD:R_0603_1608Metric,https://www.yageo.com/upload/media/product/products/datasheet/rchip/PYu-RC_Group_51_RoHS_L_12.pdf,R,10K,1%,1/10W,0603
+2,RC0603FR-07100KL,Yageo,RES 100K OHM 1% 1/10W 0603,100K,Device:R,Resistor_SMD:R_0603_1608Metric,https://www.yageo.com/upload/media/product/products/datasheet/rchip/PYu-RC_Group_51_RoHS_L_12.pdf,R,100K,1%,1/10W,0603
+3,CRCW06031K00FKEA,Vishay,RES 1K OHM 1% 1/10W 0603,1K,Device:R,Resistor_SMD:R_0603_1608Metric,https://www.vishay.com/docs/20035/dcrcw0603e3.pdf,R,1K,1%,1/10W,0603
