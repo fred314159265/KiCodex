@@ -18,6 +18,12 @@ pub enum SchemaError {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RawSchema {
     pub inherits: Option<String>,
+    #[serde(default)]
+    pub exclude_from_bom: bool,
+    #[serde(default)]
+    pub exclude_from_board: bool,
+    #[serde(default)]
+    pub exclude_from_sim: bool,
     pub fields: IndexMap<String, FieldDef>,
 }
 
@@ -26,15 +32,23 @@ pub struct FieldDef {
     pub display_name: String,
     #[serde(default)]
     pub required: bool,
+    /// Whether this field is visible on the schematic. Defaults to false;
+    /// the server makes `value` and `reference` visible regardless.
+    #[serde(default)]
+    pub visible: bool,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(rename = "type", default)]
     pub field_type: Option<String>,
 }
 
+
 /// A fully resolved schema with inherited fields merged in.
 #[derive(Debug, Clone)]
 pub struct ResolvedSchema {
+    pub exclude_from_bom: bool,
+    pub exclude_from_board: bool,
+    pub exclude_from_sim: bool,
     pub fields: IndexMap<String, FieldDef>,
 }
 
@@ -53,6 +67,9 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
         let base =
             base.ok_or_else(|| SchemaError::MissingBase(schemas_dir.display().to_string()))?;
         return Ok(ResolvedSchema {
+            exclude_from_bom: base.exclude_from_bom,
+            exclude_from_board: base.exclude_from_board,
+            exclude_from_sim: base.exclude_from_sim,
             fields: base.fields,
         });
     }
@@ -63,24 +80,48 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
     let raw: RawSchema = serde_yml::from_str(&content)?;
 
     let mut fields = IndexMap::new();
+    let mut exclude_from_bom = raw.exclude_from_bom;
+    let mut exclude_from_board = raw.exclude_from_board;
+    let mut exclude_from_sim = raw.exclude_from_sim;
 
-    // If this schema inherits from base, start with base fields
+    // If this schema inherits from base, start with base values
     if let Some(ref parent_name) = raw.inherits {
-        if parent_name == "_base" {
+        let parent = if parent_name == "_base" {
             let base =
                 base.ok_or_else(|| SchemaError::MissingBase(schemas_dir.display().to_string()))?;
-            fields.extend(base.fields);
+            ResolvedSchema {
+                exclude_from_bom: base.exclude_from_bom,
+                exclude_from_board: base.exclude_from_board,
+                exclude_from_sim: base.exclude_from_sim,
+                fields: base.fields,
+            }
         } else {
-            // Recursive inheritance could be supported here; for now just one level
-            let parent = load_schema(schemas_dir, parent_name)?;
-            fields.extend(parent.fields);
+            load_schema(schemas_dir, parent_name)?
+        };
+        fields.extend(parent.fields);
+        // Child overrides parent only if explicitly set (non-default).
+        // Since we can't distinguish "not set" from "set to false" with serde defaults,
+        // the child's values always win.
+        if !raw.exclude_from_bom {
+            exclude_from_bom = parent.exclude_from_bom;
+        }
+        if !raw.exclude_from_board {
+            exclude_from_board = parent.exclude_from_board;
+        }
+        if !raw.exclude_from_sim {
+            exclude_from_sim = parent.exclude_from_sim;
         }
     }
 
     // Type-specific fields override/extend base fields
     fields.extend(raw.fields);
 
-    Ok(ResolvedSchema { fields })
+    Ok(ResolvedSchema {
+        exclude_from_bom,
+        exclude_from_board,
+        exclude_from_sim,
+        fields,
+    })
 }
 
 #[cfg(test)]

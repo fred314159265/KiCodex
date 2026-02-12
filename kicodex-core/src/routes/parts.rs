@@ -58,15 +58,12 @@ pub async fn get_part_detail(
 }
 
 /// Special CSV columns that map to top-level API fields (not included in `fields` dict).
-const TOP_LEVEL_COLUMNS: &[&str] = &["id", "symbol"];
-
-/// Columns that become fields with visible=False.
-const HIDDEN_COLUMNS: &[&str] = &[
-    "footprint",
-    "datasheet",
-    "description",
-    "manufacturer",
-    "mpn",
+const TOP_LEVEL_COLUMNS: &[&str] = &[
+    "id",
+    "symbol",
+    "exclude_from_bom",
+    "exclude_from_board",
+    "exclude_from_sim",
 ];
 
 /// Get the display name for a CSV column. Uses schema display_name if available,
@@ -79,6 +76,36 @@ fn display_name_for(column: &str, schema: &ResolvedSchema) -> String {
         .unwrap_or_else(|| column.to_string())
 }
 
+/// Columns that are visible by default (matching KiCad conventions).
+const VISIBLE_BY_DEFAULT: &[&str] = &["value", "reference"];
+
+/// Get the visibility for a CSV column.
+/// `value` and `reference` are always visible. Everything else is hidden
+/// unless the schema explicitly sets `visible: true`.
+fn visible_for(column: &str, schema: &ResolvedSchema) -> Option<String> {
+    if VISIBLE_BY_DEFAULT.contains(&column) {
+        None
+    } else {
+        match schema.fields.get(column) {
+            Some(field) if field.visible => None,
+            _ => Some("False".to_string()),
+        }
+    }
+}
+
+/// Convert a bool to KiCad's expected string format.
+fn bool_to_kicad(b: bool) -> String {
+    if b { "True" } else { "False" }.to_string()
+}
+
+/// Normalize a CSV boolean string to KiCad format.
+fn bool_str(s: &str) -> String {
+    match s.to_lowercase().as_str() {
+        "true" | "1" | "yes" => "True".to_string(),
+        _ => "False".to_string(),
+    }
+}
+
 fn build_part_detail(row: &IndexMap<String, String>, schema: &ResolvedSchema) -> PartDetail {
     let id = row.get("id").cloned().unwrap_or_default();
     let name = row.get("mpn").cloned().unwrap_or_default();
@@ -86,56 +113,44 @@ fn build_part_detail(row: &IndexMap<String, String>, schema: &ResolvedSchema) ->
 
     let mut fields = IndexMap::new();
 
-    // Add reference field if present
-    if let Some(reference) = row.get("reference") {
-        fields.insert(
-            display_name_for("reference", schema),
-            FieldValue {
-                value: reference.clone(),
-                visible: None,
-            },
-        );
-    }
-
-    // Add value field
-    if let Some(value) = row.get("value") {
-        fields.insert(
-            display_name_for("value", schema),
-            FieldValue {
-                value: value.clone(),
-                visible: None,
-            },
-        );
-    }
-
-    // Add all other fields
     for (key, value) in row {
-        if TOP_LEVEL_COLUMNS.contains(&key.as_str()) || key == "value" || key == "reference" {
+        if TOP_LEVEL_COLUMNS.contains(&key.as_str()) {
             continue;
         }
-
-        let visible = if HIDDEN_COLUMNS.contains(&key.as_str()) {
-            Some("False".to_string())
-        } else {
-            None
-        };
 
         fields.insert(
             display_name_for(key, schema),
             FieldValue {
                 value: value.clone(),
-                visible,
+                visible: visible_for(key, schema),
             },
         );
     }
+
+    // Exclude flags: CSV column overrides schema default, which defaults to false
+    let exclude_from_bom = row
+        .get("exclude_from_bom")
+        .filter(|v| !v.is_empty())
+        .map(|v| bool_str(v))
+        .unwrap_or_else(|| bool_to_kicad(schema.exclude_from_bom));
+    let exclude_from_board = row
+        .get("exclude_from_board")
+        .filter(|v| !v.is_empty())
+        .map(|v| bool_str(v))
+        .unwrap_or_else(|| bool_to_kicad(schema.exclude_from_board));
+    let exclude_from_sim = row
+        .get("exclude_from_sim")
+        .filter(|v| !v.is_empty())
+        .map(|v| bool_str(v))
+        .unwrap_or_else(|| bool_to_kicad(schema.exclude_from_sim));
 
     PartDetail {
         id,
         name,
         symbol_id_str,
-        exclude_from_bom: "False".to_string(),
-        exclude_from_board: "False".to_string(),
-        exclude_from_sim: "True".to_string(),
+        exclude_from_bom,
+        exclude_from_board,
+        exclude_from_sim,
         fields,
     }
 }

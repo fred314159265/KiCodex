@@ -120,7 +120,7 @@ async fn test_part_detail_endpoint() {
     assert_eq!(resp["symbolIdStr"], "Device:R");
     assert_eq!(resp["exclude_from_bom"], "False");
     assert_eq!(resp["exclude_from_board"], "False");
-    assert_eq!(resp["exclude_from_sim"], "True");
+    assert_eq!(resp["exclude_from_sim"], "False");
 
     // Check fields — keys are schema display_name values
     let fields = &resp["fields"];
@@ -130,11 +130,21 @@ async fn test_part_detail_endpoint() {
     );
     assert_eq!(fields["Footprint"]["visible"], "False");
     assert_eq!(fields["Value"]["value"], "10K");
+    assert!(fields["Value"]["visible"].is_null()); // visible by default
     assert_eq!(fields["reference"]["value"], "R");
+    assert!(fields["reference"]["visible"].is_null()); // visible by default
     assert_eq!(fields["Description"]["value"], "RES 10K OHM 1% 1/10W 0603");
     assert_eq!(fields["Description"]["visible"], "False");
     assert_eq!(fields["Manufacturer"]["value"], "Yageo");
+    assert_eq!(fields["Manufacturer"]["visible"], "False");
     assert_eq!(fields["MPN"]["value"], "RC0603FR-0710KL");
+    assert_eq!(fields["MPN"]["visible"], "False");
+    assert_eq!(fields["Datasheet"]["visible"], "False");
+    // Resistor-specific fields are also hidden by default
+    assert_eq!(fields["Resistance"]["visible"], "False");
+    assert_eq!(fields["Tolerance"]["visible"], "False");
+    assert_eq!(fields["Power Rating"]["visible"], "False");
+    assert_eq!(fields["Package"]["visible"], "False");
 }
 
 #[tokio::test]
