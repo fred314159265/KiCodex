@@ -8,6 +8,8 @@ use tower_http::trace::TraceLayer;
 use crate::data::csv_loader::{self, CsvRow};
 use crate::data::library::{self, LibraryManifest};
 use crate::data::schema;
+use crate::middleware;
+use crate::registry::ProjectRegistry;
 use crate::routes;
 
 #[derive(Debug, Error)]
@@ -38,8 +40,6 @@ pub struct LoadedLibrary {
     pub tables: Vec<LoadedTable>,
 }
 
-pub type AppState = Arc<LoadedLibrary>;
-
 /// Load a library from disk into memory.
 pub fn load_library(library_root: &Path) -> Result<LoadedLibrary, ServerError> {
     let manifest: LibraryManifest = library::load_library_manifest(library_root)?;
@@ -65,10 +65,8 @@ pub fn load_library(library_root: &Path) -> Result<LoadedLibrary, ServerError> {
     })
 }
 
-/// Build the Axum router with all routes.
-pub fn build_router(library: LoadedLibrary) -> Router {
-    let state: AppState = Arc::new(library);
-
+/// Build the Axum router with auth middleware and all routes.
+pub fn build_router(registry: Arc<ProjectRegistry>) -> Router {
     Router::new()
         .route("/v1/", axum::routing::get(routes::root::get_root))
         .route(
@@ -83,11 +81,15 @@ pub fn build_router(library: LoadedLibrary) -> Router {
             "/v1/parts/{partId}",
             axum::routing::get(routes::parts::get_part_detail),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            registry.clone(),
+            middleware::auth_middleware,
+        ))
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        .with_state(registry)
 }
 
-/// Start the server on the given port.
+/// Start the server in single-library mode (Phase 1 compatible).
 pub async fn run_server(library_root: &Path, port: u16) -> Result<(), ServerError> {
     let library = load_library(library_root)?;
     tracing::info!(
@@ -99,7 +101,26 @@ pub async fn run_server(library_root: &Path, port: u16) -> Result<(), ServerErro
         tracing::info!("  {} ({} parts)", table.name, table.rows.len());
     }
 
-    let app = build_router(library);
+    let registry = ProjectRegistry::new();
+    let token = uuid::Uuid::new_v4().to_string();
+    registry.insert(&token, library);
+
+    let app = build_router(Arc::new(registry));
+    let addr = format!("127.0.0.1:{port}");
+    tracing::info!("Starting KiCodex server on http://{addr}");
+
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// Start the server with a pre-built registry (multi-project mode).
+pub async fn run_server_with_registry(
+    registry: Arc<ProjectRegistry>,
+    port: u16,
+) -> Result<(), ServerError> {
+    let app = build_router(registry);
     let addr = format!("127.0.0.1:{port}");
     tracing::info!("Starting KiCodex server on http://{addr}");
 

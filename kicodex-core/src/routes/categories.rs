@@ -1,11 +1,13 @@
-use axum::extract::State;
+use axum::Extension;
 use axum::Json;
 
+use crate::middleware::AuthenticatedLibrary;
 use crate::models::Category;
-use crate::server::AppState;
 
-pub async fn get_categories(State(state): State<AppState>) -> Json<Vec<Category>> {
-    let categories: Vec<Category> = state
+pub async fn get_categories(
+    Extension(AuthenticatedLibrary(library)): Extension<AuthenticatedLibrary>,
+) -> Json<Vec<Category>> {
+    let categories: Vec<Category> = library
         .tables
         .iter()
         .enumerate()

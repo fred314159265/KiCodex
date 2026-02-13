@@ -1,13 +1,21 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample-library")
 }
 
+/// Helper: load a library into a single-project registry and build the router.
+fn build_test_app() -> axum::Router {
+    let library = kicodex_core::server::load_library(&fixture_path()).unwrap();
+    let registry = kicodex_core::registry::ProjectRegistry::new();
+    registry.insert("test-token", library);
+    kicodex_core::server::build_router(Arc::new(registry))
+}
+
 #[tokio::test]
 async fn test_root_endpoint() {
-    let library = kicodex_core::server::load_library(&fixture_path()).unwrap();
-    let app = kicodex_core::server::build_router(library);
+    let app = build_test_app();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -34,8 +42,7 @@ async fn test_root_endpoint() {
 
 #[tokio::test]
 async fn test_categories_endpoint() {
-    let library = kicodex_core::server::load_library(&fixture_path()).unwrap();
-    let app = kicodex_core::server::build_router(library);
+    let app = build_test_app();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -63,8 +70,7 @@ async fn test_categories_endpoint() {
 
 #[tokio::test]
 async fn test_parts_by_category_endpoint() {
-    let library = kicodex_core::server::load_library(&fixture_path()).unwrap();
-    let app = kicodex_core::server::build_router(library);
+    let app = build_test_app();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -93,8 +99,7 @@ async fn test_parts_by_category_endpoint() {
 
 #[tokio::test]
 async fn test_part_detail_endpoint() {
-    let library = kicodex_core::server::load_library(&fixture_path()).unwrap();
-    let app = kicodex_core::server::build_router(library);
+    let app = build_test_app();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -120,7 +125,7 @@ async fn test_part_detail_endpoint() {
     assert_eq!(resp["symbolIdStr"], "Device:R");
     assert_eq!(resp["exclude_from_bom"], "False");
     assert_eq!(resp["exclude_from_board"], "False");
-    assert_eq!(resp["exclude_from_sim"], "False");
+    assert_eq!(resp["exclude_from_sim"], "True"); // from resistor schema
 
     // Check fields — keys are schema display_name values
     let fields = &resp["fields"];
@@ -140,8 +145,8 @@ async fn test_part_detail_endpoint() {
     assert_eq!(fields["MPN"]["value"], "RC0603FR-0710KL");
     assert_eq!(fields["MPN"]["visible"], "False");
     assert_eq!(fields["Datasheet"]["visible"], "False");
-    // Resistor-specific fields are also hidden by default
-    assert_eq!(fields["Resistance"]["visible"], "False");
+    // Resistor-specific fields
+    assert!(fields["Resistance"]["visible"].is_null()); // schema sets visible: true
     assert_eq!(fields["Tolerance"]["visible"], "False");
     assert_eq!(fields["Power Rating"]["visible"], "False");
     assert_eq!(fields["Package"]["visible"], "False");
@@ -149,8 +154,7 @@ async fn test_part_detail_endpoint() {
 
 #[tokio::test]
 async fn test_nonexistent_category_returns_404() {
-    let library = kicodex_core::server::load_library(&fixture_path()).unwrap();
-    let app = kicodex_core::server::build_router(library);
+    let app = build_test_app();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -173,8 +177,7 @@ async fn test_nonexistent_category_returns_404() {
 
 #[tokio::test]
 async fn test_nonexistent_part_returns_404() {
-    let library = kicodex_core::server::load_library(&fixture_path()).unwrap();
-    let app = kicodex_core::server::build_router(library);
+    let app = build_test_app();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -193,4 +196,88 @@ async fn test_nonexistent_part_returns_404() {
         .unwrap();
 
     assert_eq!(resp.status(), 404);
+}
+
+// --- Phase 2: Multi-project auth tests ---
+
+#[tokio::test]
+async fn test_multi_project_auth_routing() {
+    // Create two separate libraries from the same fixture (simulating different projects)
+    let library1 = kicodex_core::server::load_library(&fixture_path()).unwrap();
+    let library2 = kicodex_core::server::load_library(&fixture_path()).unwrap();
+
+    let registry = kicodex_core::registry::ProjectRegistry::new();
+    registry.insert("token-aaa", library1);
+    registry.insert("token-bbb", library2);
+
+    let app = kicodex_core::server::build_router(Arc::new(registry));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    // Request with valid token should succeed
+    let resp = client
+        .get(format!("{url}/v1/categories.json"))
+        .header("Authorization", "Token token-aaa")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Request with other valid token should also succeed
+    let resp = client
+        .get(format!("{url}/v1/categories.json"))
+        .header("Authorization", "Token token-bbb")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Request with unknown token should return 401
+    let resp = client
+        .get(format!("{url}/v1/categories.json"))
+        .header("Authorization", "Token bad-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // Request without token should return 401
+    let resp = client
+        .get(format!("{url}/v1/categories.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn test_single_project_skips_auth() {
+    // Single-project mode should work without auth header
+    let app = build_test_app();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    // No auth header — should still work in single-project mode
+    let resp = client
+        .get(format!("{url}/v1/categories.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 }

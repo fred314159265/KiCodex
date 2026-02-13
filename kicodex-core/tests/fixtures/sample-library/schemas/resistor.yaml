@@ -1,8 +1,10 @@
 inherits: _base
+exclude_from_sim: true
 fields:
   resistance:
     display_name: "Resistance"
     required: true
+    visible: true
   tolerance:
     display_name: "Tolerance"
     required: false

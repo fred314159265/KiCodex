@@ -177,7 +177,7 @@ original's library data. This is resolved automatically:
 
 - **Language:** Rust
 - **GUI/Tray:** Tauri v2 (system tray support built-in)
-- **HTTP Server:** (TBD - likely axum, actix-web, or warp)
+- **HTTP Server:** axum 0.8
 - **File Watching:** notify crate (cross-platform filesystem events)
 - **Process Inspection:** platform-specific APIs wrapped in a cross-platform abstraction
 - **CI/CD:** GitHub Actions with `tauri-apps/tauri-action` for cross-platform builds
@@ -239,6 +239,9 @@ fields:
     display_name: "Footprint"
     required: true
     type: kicad_footprint
+  reference:
+    display_name: "reference"
+    required: false
   datasheet:
     display_name: "Datasheet"
     required: false
@@ -248,10 +251,12 @@ fields:
 **`resistor.yaml` example:**
 ```yaml
 inherits: _base
+exclude_from_sim: true
 fields:
   resistance:
     display_name: "Resistance"
     required: true
+    visible: true
   tolerance:
     display_name: "Tolerance"
     required: false
@@ -272,6 +277,47 @@ fields:
 - **Free-form fields**: Extra CSV columns not defined in the schema are passed through
   to KiCad as custom fields with no error or warning. This allows users to add
   supplier part numbers, internal notes, or any other data without modifying the schema.
+
+### Field Visibility
+
+Field visibility controls whether a field is shown on the schematic when a component
+is placed. The `visible` property in the schema field definition controls this.
+
+- **`value` and `reference`** are always visible (these are core KiCad fields).
+- **All other fields** default to hidden unless the schema explicitly sets
+  `visible: true`.
+- Fields not defined in the schema (free-form CSV columns) are also hidden by default.
+
+The field's `display_name` from the schema is used as the key in the API response
+(e.g., a CSV column `mpn` with `display_name: "MPN"` appears as `"MPN"` in the
+KiCad fields list).
+
+### Exclude Flags
+
+KiCad supports three exclusion flags on components: `exclude_from_bom`,
+`exclude_from_board`, and `exclude_from_sim`. These control whether a component
+appears in the BOM, is placed on the board, or is included in simulation.
+
+All three default to `false` (component is included everywhere). They can be
+configured at two levels, with CSV overriding schema:
+
+1. **Schema level** — applies to all parts of that type:
+   ```yaml
+   # resistor.yaml
+   inherits: _base
+   exclude_from_sim: true
+   ```
+
+2. **CSV column override** — per-part exceptions:
+   ```csv
+   id,mpn,...,exclude_from_bom
+   1,TP-1,...,true
+   ```
+
+Priority: CSV column > schema default > `false`.
+
+Accepted CSV values for boolean flags: `true`/`1`/`yes` → `"True"`, anything else
+→ `"False"`.
 
 ### Schema as a Submodule
 
@@ -399,18 +445,23 @@ Categories appear as **libraries** in KiCad's Symbol Chooser.
   "symbolIdStr": "Device:R",
   "exclude_from_bom": "False",
   "exclude_from_board": "False",
-  "exclude_from_sim": "True",
+  "exclude_from_sim": "False",
   "fields": {
-    "footprint": { "value": "Resistor_SMD:R_0603_1608Metric", "visible": "False" },
-    "datasheet": { "value": "https://example.com/datasheet.pdf", "visible": "False" },
-    "value": { "value": "10K" },
     "reference": { "value": "R" },
-    "description": { "value": "RES 10K OHM 1% 1/10W 0603", "visible": "False" },
+    "Value": { "value": "10K" },
+    "MPN": { "value": "RC0603FR-0710KL", "visible": "False" },
     "Manufacturer": { "value": "Yageo", "visible": "False" },
-    "MPN": { "value": "RC0603FR-0710KL", "visible": "False" }
+    "Description": { "value": "RES 10K OHM 1% 1/10W 0603", "visible": "False" },
+    "Footprint": { "value": "Resistor_SMD:R_0603_1608Metric", "visible": "False" },
+    "Datasheet": { "value": "https://example.com/datasheet.pdf", "visible": "False" },
+    "Resistance": { "value": "10K", "visible": "False" },
+    "Package": { "value": "0603", "visible": "False" }
   }
 }
 ```
+Note: Field keys use the `display_name` from the schema (e.g., `"MPN"` not `"mpn"`).
+Fields without `"visible"` default to visible in KiCad; the server only emits
+`"visible": "False"` for hidden fields.
 
 ### Key Implementation Notes
 
@@ -421,7 +472,10 @@ Categories appear as **libraries** in KiCad's Symbol Chooser.
   (format: `LibraryName:FootprintName`, e.g., `Resistor_SMD:R_0603_1608Metric`).
 - `fields.reference.value` is the reference designator prefix (e.g., `R`, `C`, `U`).
 - The `fields` dict can contain **unlimited custom fields**. Each field must have
-  a `value` key and optionally a `visible` key (defaults to `true`).
+  a `value` key and optionally a `visible` key (KiCad defaults to visible if omitted).
+- KiCodex only emits `"visible": "False"` for hidden fields; visible fields omit the
+  key entirely. `value` and `reference` are always visible; all other fields are hidden
+  unless the schema sets `visible: true`.
 - Any non-200 response causes KiCad to show an error and ignore the result.
 
 ### Mapping from CSV/Schema to API
@@ -430,13 +484,17 @@ Categories appear as **libraries** in KiCad's Symbol Chooser.
 |---|---|
 | Table file (resistors.csv) | Category (returned by categories endpoint) |
 | Row in CSV | Part (returned by parts endpoints) |
-| `symbol` column (from _base schema) | `symbolIdStr` top-level field |
-| `footprint` column | `fields.footprint.value` |
-| `value` column | `fields.value.value` |
-| `reference` column | `fields.reference.value` |
-| `description` column | `fields.description.value` |
-| All other columns | Custom entries in `fields` dict |
 | `id` column | `id` field on parts (see Part ID Management) |
+| `symbol` column (from _base schema) | `symbolIdStr` top-level field |
+| `exclude_from_bom` column / schema flag | `exclude_from_bom` top-level field |
+| `exclude_from_board` column / schema flag | `exclude_from_board` top-level field |
+| `exclude_from_sim` column / schema flag | `exclude_from_sim` top-level field |
+| All other columns | Entries in `fields` dict, keyed by schema `display_name` |
+| Field `visible` property in schema | `fields.<name>.visible` (omitted if visible) |
+
+Columns `id`, `symbol`, `exclude_from_bom`, `exclude_from_board`, and
+`exclude_from_sim` are top-level API fields and do **not** appear in the `fields`
+dict.
 
 ## Part ID Management
 

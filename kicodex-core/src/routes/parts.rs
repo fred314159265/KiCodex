@@ -1,14 +1,14 @@
-use axum::extract::{Path, State};
+use axum::extract::Path;
 use axum::http::StatusCode;
-use axum::Json;
+use axum::{Extension, Json};
 use indexmap::IndexMap;
 
 use crate::data::schema::ResolvedSchema;
+use crate::middleware::AuthenticatedLibrary;
 use crate::models::{FieldValue, PartDetail, PartSummary};
-use crate::server::AppState;
 
 pub async fn get_parts_by_category(
-    State(state): State<AppState>,
+    Extension(AuthenticatedLibrary(library)): Extension<AuthenticatedLibrary>,
     Path(category_id): Path<String>,
 ) -> Result<Json<Vec<PartSummary>>, StatusCode> {
     let category_id = category_id.strip_suffix(".json").unwrap_or(&category_id);
@@ -18,7 +18,7 @@ pub async fn get_parts_by_category(
         .checked_sub(1)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let table = state.tables.get(idx).ok_or(StatusCode::NOT_FOUND)?;
+    let table = library.tables.get(idx).ok_or(StatusCode::NOT_FOUND)?;
 
     let parts: Vec<PartSummary> = table
         .rows
@@ -39,12 +39,12 @@ pub async fn get_parts_by_category(
 }
 
 pub async fn get_part_detail(
-    State(state): State<AppState>,
+    Extension(AuthenticatedLibrary(library)): Extension<AuthenticatedLibrary>,
     Path(part_id): Path<String>,
 ) -> Result<Json<PartDetail>, StatusCode> {
     let part_id = part_id.strip_suffix(".json").unwrap_or(&part_id);
     // Search all tables for the part
-    for table in &state.tables {
+    for table in &library.tables {
         if let Some(row) = table
             .rows
             .iter()
