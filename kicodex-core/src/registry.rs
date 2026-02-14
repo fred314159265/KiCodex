@@ -60,11 +60,11 @@ impl PersistedRegistry {
         Ok(())
     }
 
-    /// Add or update a project entry. If a project with the same project_path exists,
-    /// it is replaced (with a new token).
+    /// Add or update a project entry. Removes any existing entry with the same
+    /// project_path or library_path to avoid stale duplicates.
     pub fn upsert(&mut self, entry: ProjectEntry) {
         self.projects
-            .retain(|p| p.project_path != entry.project_path);
+            .retain(|p| p.project_path != entry.project_path && p.library_path != entry.library_path);
         self.projects.push(entry);
     }
 
