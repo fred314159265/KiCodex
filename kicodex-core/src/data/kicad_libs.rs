@@ -139,15 +139,15 @@ fn lazy_lookup(
 
     let mut map = libs.borrow_mut();
     match map.get(lib_name) {
-        None => return LibLookup::LibraryNotFound(lib_name.to_string()),
+        None => LibLookup::LibraryNotFound(lib_name.to_string()),
         Some(LibContent::Loaded(entries)) => {
-            return if entries.iter().any(|e| e == entry_name) {
+            if entries.iter().any(|e| e == entry_name) {
                 LibLookup::Found
             } else {
                 LibLookup::EntryNotFound(lib_name.to_string(), entry_name.to_string())
-            };
+            }
         }
-        Some(LibContent::Unreadable) => return LibLookup::LibraryUnreadable(lib_name.to_string()),
+        Some(LibContent::Unreadable) => LibLookup::LibraryUnreadable(lib_name.to_string()),
         Some(LibContent::Pending(_)) => {
             // Need to load — extract the path
             let LibContent::Pending(path) = map.remove(lib_name).unwrap() else {
@@ -161,11 +161,11 @@ fn lazy_lookup(
                         LibLookup::EntryNotFound(lib_name.to_string(), entry_name.to_string())
                     };
                     map.insert(lib_name.to_string(), LibContent::Loaded(entries));
-                    return result;
+                    result
                 }
                 None => {
                     map.insert(lib_name.to_string(), LibContent::Unreadable);
-                    return LibLookup::LibraryUnreadable(lib_name.to_string());
+                    LibLookup::LibraryUnreadable(lib_name.to_string())
                 }
             }
         }
@@ -239,12 +239,12 @@ fn find_matching_paren(s: &str, open: usize) -> Option<usize> {
     let mut depth = 0i32;
     let mut in_quote = false;
     let mut escape = false;
-    for i in open..bytes.len() {
+    for (i, &b) in bytes.iter().enumerate().skip(open) {
         if escape {
             escape = false;
             continue;
         }
-        match bytes[i] {
+        match b {
             b'\\' if in_quote => escape = true,
             b'"' => in_quote = !in_quote,
             b'(' if !in_quote => depth += 1,
