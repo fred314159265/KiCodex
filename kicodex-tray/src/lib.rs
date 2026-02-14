@@ -86,26 +86,22 @@ pub fn run() {
             tracing::info!("KiCodex tray app starting");
 
             // Load persisted registry
-            let registry_path = PersistedRegistry::default_path()
-                .expect("Could not determine config directory");
-            let persisted = PersistedRegistry::load(&registry_path)
-                .unwrap_or_else(|e| {
-                    tracing::warn!("Failed to load registry: {}, starting fresh", e);
-                    PersistedRegistry::default()
-                });
+            let registry_path =
+                PersistedRegistry::default_path().expect("Could not determine config directory");
+            let persisted = PersistedRegistry::load(&registry_path).unwrap_or_else(|e| {
+                tracing::warn!("Failed to load registry: {}, starting fresh", e);
+                PersistedRegistry::default()
+            });
 
             // Build runtime registry from persisted
-            let registry = ProjectRegistry::from_persisted(&persisted)
-                .unwrap_or_else(|e| {
-                    tracing::warn!("Failed to load some libraries: {}", e);
-                    ProjectRegistry::new()
-                });
+            let registry = ProjectRegistry::from_persisted(&persisted).unwrap_or_else(|e| {
+                tracing::warn!("Failed to load some libraries: {}", e);
+                ProjectRegistry::new()
+            });
             let registry = Arc::new(registry);
 
             // Start file watcher for hot-reload
-            if let Err(e) =
-                kicodex_core::watcher::start_watching(&persisted, registry.clone())
-            {
+            if let Err(e) = kicodex_core::watcher::start_watching(&persisted, registry.clone()) {
                 tracing::warn!("Failed to start file watcher: {}", e);
             }
 
@@ -113,8 +109,7 @@ pub fn run() {
             let server_registry = registry.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) =
-                    kicodex_core::server::run_server_with_registry(server_registry, port)
-                        .await
+                    kicodex_core::server::run_server_with_registry(server_registry, port).await
                 {
                     tracing::error!("HTTP server error: {}", e);
                 }
@@ -124,8 +119,7 @@ pub fn run() {
             let tray = app.tray_by_id("main");
 
             if let Some(tray) = &tray {
-                let menu = tray::build_menu(app.handle(), &[])
-                    .expect("Failed to build tray menu");
+                let menu = tray::build_menu(app.handle(), &[]).expect("Failed to build tray menu");
                 tray.set_menu(Some(menu)).expect("Failed to set tray menu");
                 let _ = tray.set_tooltip(Some("KiCodex — scanning..."));
 
@@ -152,33 +146,29 @@ pub fn run() {
             let app_handle_discovery = app.handle().clone();
             let app_handle_active = app.handle().clone();
 
-            let engine = DiscoveryEngine::new(
-                discovery_persisted,
-                discovery_registry,
-                port,
-            )
-            .on_discovery(move |updated_persisted| {
-                tracing::info!(
-                    "Discovery: now {} project(s) registered",
-                    updated_persisted.projects.len()
-                );
-                // Sync persisted state
-                if let Some(state) = app_handle_discovery.try_state::<AppState>() {
-                    *state.persisted.lock().unwrap() = updated_persisted.clone();
-                }
-            })
-            .on_active_changed(move |active_dirs| {
-                if let Some(state) = app_handle_active.try_state::<AppState>() {
-                    let persisted = state.persisted.lock().unwrap();
-                    let active = resolve_active_projects(active_dirs, &persisted);
-                    let labels = menu_labels_from_active(&active);
-                    *state.active_projects.lock().unwrap() = active;
-
-                    if let Some(tray) = app_handle_active.tray_by_id("main") {
-                        tray::update_menu(&app_handle_active, &tray, &labels);
+            let engine = DiscoveryEngine::new(discovery_persisted, discovery_registry, port)
+                .on_discovery(move |updated_persisted| {
+                    tracing::info!(
+                        "Discovery: now {} project(s) registered",
+                        updated_persisted.projects.len()
+                    );
+                    // Sync persisted state
+                    if let Some(state) = app_handle_discovery.try_state::<AppState>() {
+                        *state.persisted.lock().unwrap() = updated_persisted.clone();
                     }
-                }
-            });
+                })
+                .on_active_changed(move |active_dirs| {
+                    if let Some(state) = app_handle_active.try_state::<AppState>() {
+                        let persisted = state.persisted.lock().unwrap();
+                        let active = resolve_active_projects(active_dirs, &persisted);
+                        let labels = menu_labels_from_active(&active);
+                        *state.active_projects.lock().unwrap() = active;
+
+                        if let Some(tray) = app_handle_active.tray_by_id("main") {
+                            tray::update_menu(&app_handle_active, &tray, &labels);
+                        }
+                    }
+                });
 
             tauri::async_runtime::spawn(engine.start());
 

@@ -1,7 +1,10 @@
 [package]
 name = "kicodex-core"
-version = "0.1.0"
-edition = "2021"
+description = "Core library for KiCodex: KiCad HTTP Library server backed by CSV files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 axum = "0.8"

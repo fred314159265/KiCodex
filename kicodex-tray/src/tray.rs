@@ -5,10 +5,21 @@ use tauri::{AppHandle, Manager};
 use crate::AppState;
 
 /// Build the tray menu with current project list.
-pub fn build_menu(app: &AppHandle, project_names: &[String]) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+pub fn build_menu(
+    app: &AppHandle,
+    project_names: &[String],
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let mut builder = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id("title", "KiCodex").enabled(false).build(app)?)
-        .item(&MenuItemBuilder::with_id("status", "Status: Running").enabled(false).build(app)?)
+        .item(
+            &MenuItemBuilder::with_id("title", "KiCodex")
+                .enabled(false)
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id("status", "Status: Running")
+                .enabled(false)
+                .build(app)?,
+        )
         .item(&PredefinedMenuItem::separator(app)?);
 
     if project_names.is_empty() {
@@ -19,10 +30,8 @@ pub fn build_menu(app: &AppHandle, project_names: &[String]) -> tauri::Result<ta
         );
     } else {
         for (i, name) in project_names.iter().enumerate() {
-            builder = builder.item(
-                &MenuItemBuilder::with_id(format!("project-{i}"), name)
-                    .build(app)?,
-            );
+            builder =
+                builder.item(&MenuItemBuilder::with_id(format!("project-{i}"), name).build(app)?);
         }
     }
 

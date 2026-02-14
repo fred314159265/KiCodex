@@ -283,8 +283,7 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
             )
         })?;
 
-        let mut manifest =
-            kicodex_core::data::library::load_library_manifest(&lib_dir)?;
+        let mut manifest = kicodex_core::data::library::load_library_manifest(&lib_dir)?;
 
         // Check for duplicate table (compare against schema key, which is the lowercase table identifier)
         if manifest.tables.iter().any(|t| t.schema == table_name) {
@@ -349,11 +348,7 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
         let yaml = serde_yml::to_string(&manifest)?;
         std::fs::write(&manifest_path, yaml)?;
 
-        println!(
-            "Created library '{}' at {}/",
-            name,
-            lib_dir.display()
-        );
+        println!("Created library '{}' at {}/", name, lib_dir.display());
         println!("  - library.yaml");
         println!("  - schemas/{}.yaml", table_name);
         println!("  - {}.csv", table_name);
@@ -369,9 +364,7 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
 /// Scan for library.yaml files and generate/update kicodex.yaml.
 fn run_scan(scan_dir: &std::path::Path) -> anyhow::Result<()> {
     let pattern = format!("{}/**/library.yaml", scan_dir.display());
-    let entries: Vec<_> = glob::glob(&pattern)?
-        .filter_map(|e| e.ok())
-        .collect();
+    let entries: Vec<_> = glob::glob(&pattern)?.filter_map(|e| e.ok()).collect();
 
     if entries.is_empty() {
         println!("No library.yaml files found under {}", scan_dir.display());
@@ -413,12 +406,15 @@ fn run_scan(scan_dir: &std::path::Path) -> anyhow::Result<()> {
         };
 
         // Compute relative path from scan_dir to lib_dir
-        let rel_path = pathdiff::diff_paths(lib_dir, scan_dir)
-            .unwrap_or_else(|| lib_dir.to_path_buf());
+        let rel_path =
+            pathdiff::diff_paths(lib_dir, scan_dir).unwrap_or_else(|| lib_dir.to_path_buf());
         let rel_path_str = rel_path.to_string_lossy().replace('\\', "/");
 
         if existing_names.contains(&manifest.name) {
-            println!("  = {} ({})     [already in kicodex.yaml]", manifest.name, rel_path_str);
+            println!(
+                "  = {} ({})     [already in kicodex.yaml]",
+                manifest.name, rel_path_str
+            );
         } else {
             println!("  + {} ({})     [NEW]", manifest.name, rel_path_str);
             existing_config
@@ -439,7 +435,11 @@ fn run_scan(scan_dir: &std::path::Path) -> anyhow::Result<()> {
         println!(
             "Updated kicodex.yaml ({} new {} added)",
             new_count,
-            if new_count == 1 { "library" } else { "libraries" }
+            if new_count == 1 {
+                "library"
+            } else {
+                "libraries"
+            }
         );
     } else {
         println!("kicodex.yaml is up to date (no new libraries found)");
@@ -522,7 +522,9 @@ fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow
             .cloned()
             .unwrap_or_else(|| table.schema_name.clone());
 
-        let csv_headers: HashSet<&String> = table.rows.first()
+        let csv_headers: HashSet<&String> = table
+            .rows
+            .first()
             .map(|r| r.keys().collect())
             .unwrap_or_default();
 
@@ -535,7 +537,10 @@ fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow
                     file: csv_file.clone(),
                     row: None,
                     id: None,
-                    message: format!("required field '{}' is missing from CSV columns", field_name),
+                    message: format!(
+                        "required field '{}' is missing from CSV columns",
+                        field_name
+                    ),
                 });
             }
         }
@@ -548,17 +553,15 @@ fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow
             let row_id = row.get("id").cloned().unwrap_or_default();
 
             // Check 3: Duplicate IDs
-            if !row_id.is_empty() {
-                if !seen_ids.insert(row_id.clone()) {
-                    issues.push(ValidationIssue {
-                        severity: Severity::Error,
-                        table: table.name.clone(),
-                        file: csv_file.clone(),
-                        row: Some(row_num),
-                        id: Some(row_id.clone()),
-                        message: format!("duplicate id '{}'", row_id),
-                    });
-                }
+            if !row_id.is_empty() && !seen_ids.insert(row_id.clone()) {
+                issues.push(ValidationIssue {
+                    severity: Severity::Error,
+                    table: table.name.clone(),
+                    file: csv_file.clone(),
+                    row: Some(row_num),
+                    id: Some(row_id.clone()),
+                    message: format!("duplicate id '{}'", row_id),
+                });
             }
 
             for (field_name, field_def) in &table.schema.fields {
@@ -574,7 +577,10 @@ fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow
                             file: csv_file.clone(),
                             row: Some(row_num),
                             id: Some(row_id.clone()),
-                            message: format!("required field '{}' is empty", field_def.display_name),
+                            message: format!(
+                                "required field '{}' is empty",
+                                field_def.display_name
+                            ),
                         });
                     }
                     continue;
@@ -603,7 +609,11 @@ fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow
                 if matches!(field_type, Some("kicad_symbol") | Some("kicad_footprint")) {
                     let colon_count = value.chars().filter(|&c| c == ':').count();
                     if colon_count != 1 {
-                        let sev = if field_def.required { Severity::Error } else { Severity::Warn };
+                        let sev = if field_def.required {
+                            Severity::Error
+                        } else {
+                            Severity::Warn
+                        };
                         issues.push(ValidationIssue {
                             severity: sev,
                             table: table.name.clone(),
@@ -621,29 +631,39 @@ fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow
                 }
 
                 // Check 6: URL format
-                if field_type == Some("url") {
-                    if !value.starts_with("http://") && !value.starts_with("https://") {
-                        let sev = if field_def.required { Severity::Error } else { Severity::Warn };
-                        issues.push(ValidationIssue {
-                            severity: sev,
-                            table: table.name.clone(),
-                            file: csv_file.clone(),
-                            row: Some(row_num),
-                            id: Some(row_id.clone()),
-                            message: format!(
-                                "field '{}' has invalid URL '{}' (must start with http:// or https://)",
-                                field_def.display_name,
-                                value
-                            ),
-                        });
-                    }
+                if field_type == Some("url")
+                    && !value.starts_with("http://")
+                    && !value.starts_with("https://")
+                {
+                    let sev = if field_def.required {
+                        Severity::Error
+                    } else {
+                        Severity::Warn
+                    };
+                    issues.push(ValidationIssue {
+                        severity: sev,
+                        table: table.name.clone(),
+                        file: csv_file.clone(),
+                        row: Some(row_num),
+                        id: Some(row_id.clone()),
+                        message: format!(
+                            "field '{}' has invalid URL '{}' (must start with http:// or https://)",
+                            field_def.display_name, value
+                        ),
+                    });
                 }
             }
         }
     }
 
-    let error_count = issues.iter().filter(|i| i.severity == Severity::Error).count();
-    let warning_count = issues.iter().filter(|i| i.severity == Severity::Warn).count();
+    let error_count = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Error)
+        .count();
+    let warning_count = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Warn)
+        .count();
 
     if json_output {
         let tables_json: Vec<serde_json::Value> = library
@@ -701,7 +721,10 @@ fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow
 
                 match (&issue.row, &issue.id) {
                     (Some(row), Some(id)) if !id.is_empty() => {
-                        println!("  {} Row {} (id={}): {}", severity_tag, row, id, issue.message);
+                        println!(
+                            "  {} Row {} (id={}): {}",
+                            severity_tag, row, id, issue.message
+                        );
                     }
                     (Some(row), _) => {
                         println!("  {} Row {}: {}", severity_tag, row, issue.message);

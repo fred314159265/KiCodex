@@ -15,7 +15,7 @@ pub fn scan_kicad_processes() -> Vec<PathBuf> {
 
     let mut project_dirs: Vec<PathBuf> = Vec::new();
 
-    for (_pid, process) in system.processes() {
+    for process in system.processes().values() {
         let name = process.name().to_string_lossy().to_lowercase();
         if !name.contains("kicad") {
             continue;
@@ -25,7 +25,9 @@ pub fn scan_kicad_processes() -> Vec<PathBuf> {
         tracing::debug!(
             "Found KiCad process: name={}, args={:?}",
             name,
-            cmd.iter().map(|a| a.to_string_lossy().to_string()).collect::<Vec<_>>()
+            cmd.iter()
+                .map(|a| a.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
         );
 
         for arg in cmd {
@@ -93,14 +95,8 @@ mod tests {
     #[test]
     fn test_extract_deduplicates() {
         let args = vec![
-            vec![
-                "kicad".to_string(),
-                "/project/board.kicad_pro".to_string(),
-            ],
-            vec![
-                "kicad".to_string(),
-                "/project/board.kicad_pro".to_string(),
-            ],
+            vec!["kicad".to_string(), "/project/board.kicad_pro".to_string()],
+            vec!["kicad".to_string(), "/project/board.kicad_pro".to_string()],
         ];
         let dirs = extract_project_dirs_from_args(&args);
         assert_eq!(dirs.len(), 1);
