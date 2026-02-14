@@ -1,7 +1,9 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use serde_json::json;
 
 #[derive(Parser)]
 #[command(
@@ -61,6 +63,17 @@ enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+
+    /// Validate library data against schemas
+    Validate {
+        /// Path to library directory (containing library.yaml)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Output results as JSON (for CI)
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -78,10 +91,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Serve { path, port } => match path {
             Some(path) => {
                 let path = path.canonicalize().unwrap_or(path);
-                kicodex_core::server::run_server(&path, port).await?;
+                run_serve(&path, port).await?;
             }
             None => {
-                run_serve_all(port).await?;
+                let cwd = std::env::current_dir()?;
+                if cwd.join("kicodex.yaml").exists() {
+                    run_serve(&cwd, port).await?;
+                } else {
+                    run_serve_all(port).await?;
+                }
             }
         },
         Commands::Init { path, port } => {
@@ -94,6 +112,55 @@ async fn main() -> anyhow::Result<()> {
         Commands::Scan { path } => {
             run_scan(&path)?;
         }
+        Commands::Validate { path, json } => {
+            let path = path.canonicalize().unwrap_or(path);
+            let code = run_validate(&path, json)?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Serve from a path: if it has kicodex.yaml, load all libraries from it;
+/// if it has library.yaml, serve that single library.
+async fn run_serve(path: &std::path::Path, port: u16) -> anyhow::Result<()> {
+    if path.join("kicodex.yaml").exists() {
+        let config = kicodex_core::data::project::load_project_config(path)?;
+        if config.libraries.is_empty() {
+            anyhow::bail!("kicodex.yaml has no libraries listed");
+        }
+
+        let registry = kicodex_core::registry::ProjectRegistry::new();
+        for lib_ref in &config.libraries {
+            let lib_path = path.join(&lib_ref.path);
+            let lib_path = lib_path.canonicalize().unwrap_or(lib_path);
+            let library = kicodex_core::server::load_library(&lib_path)?;
+            tracing::info!(
+                "Loaded library '{}' with {} tables",
+                library.name,
+                library.tables.len()
+            );
+            for table in &library.tables {
+                tracing::info!("  {} ({} parts)", table.name, table.rows.len());
+            }
+            let token = uuid::Uuid::new_v4().to_string();
+            registry.insert(&token, library);
+        }
+
+        let registry = Arc::new(registry);
+        kicodex_core::server::run_server_with_registry(registry, port).await?;
+    } else if path.join("library.yaml").exists() {
+        kicodex_core::server::run_server(path, port).await?;
+    } else {
+        anyhow::bail!(
+            "No library.yaml or kicodex.yaml found in {}. \
+             Run `kicodex scan` to generate kicodex.yaml, or \
+             `kicodex serve <library-dir>` to serve a single library.",
+            path.display()
+        );
     }
 
     Ok(())
@@ -379,6 +446,294 @@ fn run_scan(scan_dir: &std::path::Path) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Severity {
+    Error,
+    Warn,
+}
+
+struct ValidationIssue {
+    severity: Severity,
+    table: String,
+    file: String,
+    row: Option<usize>,
+    id: Option<String>,
+    message: String,
+}
+
+/// Validate library data against schemas and report issues.
+/// Returns exit code: 0 if no errors, 1 if any errors.
+///
+/// If `path` contains a `kicodex.yaml`, validates all libraries referenced in it.
+/// If `path` contains a `library.yaml`, validates that single library.
+fn run_validate(path: &std::path::Path, json_output: bool) -> anyhow::Result<i32> {
+    // Determine library paths to validate
+    let library_roots: Vec<std::path::PathBuf> = if path.join("kicodex.yaml").exists() {
+        let config = kicodex_core::data::project::load_project_config(path)?;
+        if config.libraries.is_empty() {
+            anyhow::bail!("kicodex.yaml has no libraries listed");
+        }
+        config
+            .libraries
+            .iter()
+            .map(|lib_ref| {
+                let lib_path = path.join(&lib_ref.path);
+                lib_path.canonicalize().unwrap_or(lib_path)
+            })
+            .collect()
+    } else if path.join("library.yaml").exists() {
+        vec![path.to_path_buf()]
+    } else {
+        anyhow::bail!(
+            "No library.yaml or kicodex.yaml found in {}",
+            path.display()
+        );
+    };
+
+    let mut total_exit_code = 0;
+    for library_root in &library_roots {
+        let code = validate_library(library_root, json_output)?;
+        if code != 0 {
+            total_exit_code = code;
+        }
+    }
+    Ok(total_exit_code)
+}
+
+/// Validate a single library directory.
+fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow::Result<i32> {
+    let library = kicodex_core::server::load_library(library_root)?;
+    let manifest = kicodex_core::data::library::load_library_manifest(library_root)?;
+
+    // Build a map from table name -> csv file path
+    let table_files: std::collections::HashMap<String, String> = manifest
+        .tables
+        .iter()
+        .map(|t| (t.name.clone(), t.file.clone()))
+        .collect();
+
+    let mut issues: Vec<ValidationIssue> = Vec::new();
+
+    for table in &library.tables {
+        let csv_file = table_files
+            .get(&table.name)
+            .cloned()
+            .unwrap_or_else(|| table.schema_name.clone());
+
+        let csv_headers: HashSet<&String> = table.rows.first()
+            .map(|r| r.keys().collect())
+            .unwrap_or_default();
+
+        // Check 1: Required fields present as CSV columns
+        for (field_name, field_def) in &table.schema.fields {
+            if field_def.required && !csv_headers.contains(field_name) {
+                issues.push(ValidationIssue {
+                    severity: Severity::Error,
+                    table: table.name.clone(),
+                    file: csv_file.clone(),
+                    row: None,
+                    id: None,
+                    message: format!("required field '{}' is missing from CSV columns", field_name),
+                });
+            }
+        }
+
+        // Check 2-6: Per-row checks
+        let mut seen_ids: HashSet<String> = HashSet::new();
+
+        for (row_idx, row) in table.rows.iter().enumerate() {
+            let row_num = row_idx + 1; // 1-based
+            let row_id = row.get("id").cloned().unwrap_or_default();
+
+            // Check 3: Duplicate IDs
+            if !row_id.is_empty() {
+                if !seen_ids.insert(row_id.clone()) {
+                    issues.push(ValidationIssue {
+                        severity: Severity::Error,
+                        table: table.name.clone(),
+                        file: csv_file.clone(),
+                        row: Some(row_num),
+                        id: Some(row_id.clone()),
+                        message: format!("duplicate id '{}'", row_id),
+                    });
+                }
+            }
+
+            for (field_name, field_def) in &table.schema.fields {
+                let value = row.get(field_name).map(|s| s.as_str()).unwrap_or("");
+                let field_type = field_def.field_type.as_deref();
+
+                // Check 2: Required fields non-empty
+                if field_def.required && value.is_empty() {
+                    if csv_headers.contains(field_name) {
+                        issues.push(ValidationIssue {
+                            severity: Severity::Error,
+                            table: table.name.clone(),
+                            file: csv_file.clone(),
+                            row: Some(row_num),
+                            id: Some(row_id.clone()),
+                            message: format!("required field '{}' is empty", field_def.display_name),
+                        });
+                    }
+                    continue;
+                }
+
+                if value.is_empty() {
+                    // Warn on empty optional typed fields
+                    if field_type.is_some() {
+                        issues.push(ValidationIssue {
+                            severity: Severity::Warn,
+                            table: table.name.clone(),
+                            file: csv_file.clone(),
+                            row: Some(row_num),
+                            id: Some(row_id.clone()),
+                            message: format!(
+                                "field '{}' is empty ({} field)",
+                                field_def.display_name,
+                                field_type.unwrap()
+                            ),
+                        });
+                    }
+                    continue;
+                }
+
+                // Check 4 & 5: kicad_symbol / kicad_footprint format
+                if matches!(field_type, Some("kicad_symbol") | Some("kicad_footprint")) {
+                    let colon_count = value.chars().filter(|&c| c == ':').count();
+                    if colon_count != 1 {
+                        let sev = if field_def.required { Severity::Error } else { Severity::Warn };
+                        issues.push(ValidationIssue {
+                            severity: sev,
+                            table: table.name.clone(),
+                            file: csv_file.clone(),
+                            row: Some(row_num),
+                            id: Some(row_id.clone()),
+                            message: format!(
+                                "field '{}' has invalid {} format '{}' (expected 'Library:Name')",
+                                field_def.display_name,
+                                field_type.unwrap(),
+                                value
+                            ),
+                        });
+                    }
+                }
+
+                // Check 6: URL format
+                if field_type == Some("url") {
+                    if !value.starts_with("http://") && !value.starts_with("https://") {
+                        let sev = if field_def.required { Severity::Error } else { Severity::Warn };
+                        issues.push(ValidationIssue {
+                            severity: sev,
+                            table: table.name.clone(),
+                            file: csv_file.clone(),
+                            row: Some(row_num),
+                            id: Some(row_id.clone()),
+                            message: format!(
+                                "field '{}' has invalid URL '{}' (must start with http:// or https://)",
+                                field_def.display_name,
+                                value
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let error_count = issues.iter().filter(|i| i.severity == Severity::Error).count();
+    let warning_count = issues.iter().filter(|i| i.severity == Severity::Warn).count();
+
+    if json_output {
+        let tables_json: Vec<serde_json::Value> = library
+            .tables
+            .iter()
+            .map(|table| {
+                let csv_file = table_files
+                    .get(&table.name)
+                    .cloned()
+                    .unwrap_or_else(|| table.schema_name.clone());
+                let errors: Vec<_> = issues
+                    .iter()
+                    .filter(|i| i.table == table.name && i.severity == Severity::Error)
+                    .map(issue_to_json)
+                    .collect();
+                let warnings: Vec<_> = issues
+                    .iter()
+                    .filter(|i| i.table == table.name && i.severity == Severity::Warn)
+                    .map(issue_to_json)
+                    .collect();
+                json!({
+                    "name": table.name,
+                    "file": csv_file,
+                    "errors": errors,
+                    "warnings": warnings,
+                })
+            })
+            .collect();
+
+        let output = json!({
+            "library": library.name,
+            "tables": tables_json,
+            "error_count": error_count,
+            "warning_count": warning_count,
+        });
+
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("Validating library '{}'...\n", library.name);
+
+        if issues.is_empty() {
+            println!("No issues found across {} table(s).", library.tables.len());
+        } else {
+            let mut current_table = String::new();
+            for issue in &issues {
+                if issue.table != current_table {
+                    current_table = issue.table.clone();
+                    println!("Table '{}' ({}):", current_table, issue.file);
+                }
+
+                let severity_tag = match issue.severity {
+                    Severity::Error => "[ERROR]",
+                    Severity::Warn => "[WARN]",
+                };
+
+                match (&issue.row, &issue.id) {
+                    (Some(row), Some(id)) if !id.is_empty() => {
+                        println!("  {} Row {} (id={}): {}", severity_tag, row, id, issue.message);
+                    }
+                    (Some(row), _) => {
+                        println!("  {} Row {}: {}", severity_tag, row, issue.message);
+                    }
+                    _ => {
+                        println!("  {} {}", severity_tag, issue.message);
+                    }
+                }
+            }
+
+            println!(
+                "\nSummary: {} error(s), {} warning(s) across {} table(s)",
+                error_count,
+                warning_count,
+                library.tables.len()
+            );
+        }
+    }
+
+    Ok(if error_count > 0 { 1 } else { 0 })
+}
+
+fn issue_to_json(issue: &ValidationIssue) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    if let Some(row) = issue.row {
+        obj.insert("row".into(), json!(row));
+    }
+    if let Some(ref id) = issue.id {
+        obj.insert("id".into(), json!(id));
+    }
+    obj.insert("message".into(), json!(issue.message));
+    serde_json::Value::Object(obj)
 }
 
 fn schema_template() -> &'static str {
