@@ -88,11 +88,30 @@ impl LockWatcher {
                                     );
                                     let _ = event_tx.send(LockEvent::ProjectOpened(dir));
                                 } else {
-                                    tracing::info!(
-                                        "Lock file removed: {} — project closed",
-                                        path.display()
-                                    );
-                                    let _ = event_tx.send(LockEvent::ProjectClosed(dir));
+                                    // Check if any other .lck files remain in the directory
+                                    let has_remaining_locks = std::fs::read_dir(&dir)
+                                        .map(|entries| {
+                                            entries.filter_map(|e| e.ok()).any(|e| {
+                                                e.path()
+                                                    .extension()
+                                                    .and_then(|ext| ext.to_str())
+                                                    == Some("lck")
+                                            })
+                                        })
+                                        .unwrap_or(false);
+
+                                    if has_remaining_locks {
+                                        tracing::debug!(
+                                            "Lock file removed: {} — other locks remain, project still open",
+                                            path.display()
+                                        );
+                                    } else {
+                                        tracing::info!(
+                                            "Lock file removed: {} — no locks remain, project closed",
+                                            path.display()
+                                        );
+                                        let _ = event_tx.send(LockEvent::ProjectClosed(dir));
+                                    }
                                 }
                             }
                         }
