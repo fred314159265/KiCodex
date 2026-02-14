@@ -653,7 +653,7 @@ fn validate_library(
 
                 if value.is_empty() {
                     // Warn on empty optional typed fields
-                    if field_type.is_some() {
+                    if let Some(ft) = field_type {
                         issues.push(ValidationIssue {
                             severity: Severity::Warn,
                             table: table.name.clone(),
@@ -662,8 +662,7 @@ fn validate_library(
                             id: Some(row_id.clone()),
                             message: format!(
                                 "field '{}' is empty ({} field)",
-                                field_def.display_name,
-                                field_type.unwrap()
+                                field_def.display_name, ft
                             ),
                         });
                     }
