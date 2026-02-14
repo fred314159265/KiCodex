@@ -21,15 +21,15 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux
-            binary: kicodex-cli
+            binary: kicodex
             artifact: kicodex-linux
           - os: windows-latest
             target: windows
-            binary: kicodex-cli.exe
+            binary: kicodex.exe
             artifact: kicodex-windows.exe
           - os: macos-latest
             target: macos
-            binary: kicodex-cli
+            binary: kicodex
             artifact: kicodex-macos
 
     steps:
