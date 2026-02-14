@@ -46,8 +46,8 @@ pub fn start_watching(
     let registry_clone = registry;
     let entries = watch_entries;
 
-    // Spawn a blocking thread to process file system events
-    tokio::task::spawn_blocking(move || {
+    // Spawn a background thread to process file system events
+    std::thread::spawn(move || {
         // Keep the debouncer alive for the lifetime of this thread
         let _debouncer = debouncer;
 

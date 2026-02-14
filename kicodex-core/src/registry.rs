@@ -24,6 +24,8 @@ pub struct ProjectEntry {
     pub project_path: String,
     pub library_path: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Persistent registry stored as JSON on disk.
@@ -163,6 +165,7 @@ mod tests {
             project_path: "/home/user/project1".to_string(),
             library_path: "/home/user/project1/libs/components".to_string(),
             name: "Project 1".to_string(),
+            description: None,
         });
 
         registry.save(&path).unwrap();
@@ -180,12 +183,14 @@ mod tests {
             project_path: "/project".to_string(),
             library_path: "/project/libs".to_string(),
             name: "Project".to_string(),
+            description: None,
         });
         registry.upsert(ProjectEntry {
             token: "token2".to_string(),
             project_path: "/project".to_string(),
             library_path: "/project/libs".to_string(),
             name: "Project Updated".to_string(),
+            description: None,
         });
 
         assert_eq!(registry.projects.len(), 1);
@@ -201,12 +206,14 @@ mod tests {
             project_path: "/p1".to_string(),
             library_path: "/p1/libs".to_string(),
             name: "P1".to_string(),
+            description: None,
         });
         registry.upsert(ProjectEntry {
             token: "def".to_string(),
             project_path: "/p2".to_string(),
             library_path: "/p2/libs".to_string(),
             name: "P2".to_string(),
+            description: None,
         });
 
         assert_eq!(registry.find_by_token("abc").unwrap().name, "P1");
@@ -222,6 +229,7 @@ mod tests {
             project_path: "/p1".to_string(),
             library_path: "/p1/libs".to_string(),
             name: "P1".to_string(),
+            description: None,
         });
         registry.remove_by_path("/p1");
         assert!(registry.projects.is_empty());

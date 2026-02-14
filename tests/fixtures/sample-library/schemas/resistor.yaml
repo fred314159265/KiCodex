@@ -1,0 +1,16 @@
+inherits: _base
+exclude_from_sim: true
+fields:
+  resistance:
+    display_name: "Resistance"
+    required: true
+    visible: true
+  tolerance:
+    display_name: "Tolerance"
+    required: false
+  power_rating:
+    display_name: "Power Rating"
+    required: false
+  package:
+    display_name: "Package"
+    required: true

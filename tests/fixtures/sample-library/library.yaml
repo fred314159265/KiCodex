@@ -1,0 +1,7 @@
+name: "Sample Components Library"
+schemas_path: schemas
+
+tables:
+  - file: data/resistors.csv
+    schema: resistor
+    name: "Resistors"

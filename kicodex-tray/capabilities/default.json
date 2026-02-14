@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickkatsios/tauri-v2-capabilities-schema/main/schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for KiCodex tray app",
+  "windows": ["*"],
+  "permissions": [
+    "core:default"
+  ]
+}

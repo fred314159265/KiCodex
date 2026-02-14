@@ -20,6 +20,7 @@ dashmap = "6"
 notify = "7"
 notify-debouncer-mini = "0.5"
 dirs = "6"
+sysinfo = "0.33"
 
 [dev-dependencies]
 tempfile = "3"

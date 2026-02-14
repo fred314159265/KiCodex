@@ -37,6 +37,7 @@ pub struct LoadedTable {
 #[derive(Debug, Clone)]
 pub struct LoadedLibrary {
     pub name: String,
+    pub description: Option<String>,
     pub tables: Vec<LoadedTable>,
 }
 
@@ -61,6 +62,7 @@ pub fn load_library(library_root: &Path) -> Result<LoadedLibrary, ServerError> {
 
     Ok(LoadedLibrary {
         name: manifest.name,
+        description: manifest.description,
         tables,
     })
 }

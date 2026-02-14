@@ -1,0 +1,28 @@
+fields:
+  mpn:
+    display_name: "MPN"
+    required: true
+  manufacturer:
+    display_name: "Manufacturer"
+    required: true
+  description:
+    display_name: "Description"
+    required: true
+  value:
+    display_name: "Value"
+    required: true
+  symbol:
+    display_name: "Symbol"
+    required: true
+    type: kicad_symbol
+  footprint:
+    display_name: "Footprint"
+    required: true
+    type: kicad_footprint
+  reference:
+    display_name: "reference"
+    required: false
+  datasheet:
+    display_name: "Datasheet"
+    required: false
+    type: url
