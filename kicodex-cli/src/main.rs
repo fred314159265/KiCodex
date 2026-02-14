@@ -70,6 +70,11 @@ enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
 
+        /// KiCad project directory (for project-local lib tables).
+        /// Auto-detected from kicodex.yaml or .kicad_pro location if omitted.
+        #[arg(long)]
+        project: Option<PathBuf>,
+
         /// Output results as JSON (for CI)
         #[arg(long)]
         json: bool,
@@ -112,9 +117,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Scan { path } => {
             run_scan(&path)?;
         }
-        Commands::Validate { path, json } => {
+        Commands::Validate { path, project, json } => {
             let path = path.canonicalize().unwrap_or(path);
-            let code = run_validate(&path, json)?;
+            let code = run_validate(&path, project.as_deref(), json)?;
             if code != 0 {
                 std::process::exit(code);
             }
@@ -468,7 +473,11 @@ struct ValidationIssue {
 ///
 /// If `path` contains a `kicodex.yaml`, validates all libraries referenced in it.
 /// If `path` contains a `library.yaml`, validates that single library.
-fn run_validate(path: &std::path::Path, json_output: bool) -> anyhow::Result<i32> {
+fn run_validate(
+    path: &std::path::Path,
+    project: Option<&std::path::Path>,
+    json_output: bool,
+) -> anyhow::Result<i32> {
     // Determine library paths to validate
     let library_roots: Vec<std::path::PathBuf> = if path.join("kicodex.yaml").exists() {
         let config = kicodex_core::data::project::load_project_config(path)?;
@@ -492,9 +501,25 @@ fn run_validate(path: &std::path::Path, json_output: bool) -> anyhow::Result<i32
         );
     };
 
+    // Determine project directory for KiCad lib tables
+    let project_dir = project
+        .map(|p| p.to_path_buf())
+        .or_else(|| find_project_dir(path));
+
+    // Try to load KiCad libraries (warn and skip if unavailable)
+    let kicad_libs = match kicodex_core::data::kicad_libs::KicadLibraries::load(
+        project_dir.as_deref(),
+    ) {
+        Ok(libs) => Some(libs),
+        Err(e) => {
+            tracing::warn!("Could not load KiCad library tables: {}", e);
+            None
+        }
+    };
+
     let mut total_exit_code = 0;
     for library_root in &library_roots {
-        let code = validate_library(library_root, json_output)?;
+        let code = validate_library(library_root, kicad_libs.as_ref(), json_output)?;
         if code != 0 {
             total_exit_code = code;
         }
@@ -502,8 +527,47 @@ fn run_validate(path: &std::path::Path, json_output: bool) -> anyhow::Result<i32
     Ok(total_exit_code)
 }
 
+/// Walk up from `path` to find a directory containing `kicodex.yaml` or `.kicad_pro`.
+/// Limited to 10 levels to avoid scanning large directory trees.
+fn find_project_dir(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut current = if path.is_file() {
+        path.parent()?.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+    for _ in 0..10 {
+        if current.join("kicodex.yaml").exists() || current.join("sym-lib-table").exists() {
+            return Some(current);
+        }
+        // Check for .kicad_pro only in directories likely to be project dirs
+        if std::fs::read_dir(&current)
+            .ok()
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .any(|e| {
+                        e.file_name()
+                            .to_str()
+                            .is_some_and(|n| n.ends_with(".kicad_pro"))
+                    })
+            })
+            .unwrap_or(false)
+        {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+    None
+}
+
 /// Validate a single library directory.
-fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow::Result<i32> {
+fn validate_library(
+    library_root: &std::path::Path,
+    kicad_libs: Option<&kicodex_core::data::kicad_libs::KicadLibraries>,
+    json_output: bool,
+) -> anyhow::Result<i32> {
     let library = kicodex_core::server::load_library(library_root)?;
     let manifest = kicodex_core::data::library::load_library_manifest(library_root)?;
 
@@ -627,6 +691,56 @@ fn validate_library(library_root: &std::path::Path, json_output: bool) -> anyhow
                                 value
                             ),
                         });
+                    } else if let Some(klibs) = kicad_libs {
+                        // Deep validation: check against KiCad library tables
+                        use kicodex_core::data::kicad_libs::LibLookup;
+                        let result = if field_type == Some("kicad_symbol") {
+                            klibs.has_symbol(value)
+                        } else {
+                            klibs.has_footprint(value)
+                        };
+                        let kind = if field_type == Some("kicad_symbol") {
+                            "symbol"
+                        } else {
+                            "footprint"
+                        };
+                        match result {
+                            LibLookup::Found => {}
+                            LibLookup::LibraryNotFound(lib) => {
+                                issues.push(ValidationIssue {
+                                    severity: Severity::Warn,
+                                    table: table.name.clone(),
+                                    file: csv_file.clone(),
+                                    row: Some(row_num),
+                                    id: Some(row_id.clone()),
+                                    message: format!(
+                                        "{} library '{}' not found in lib tables",
+                                        kind, lib
+                                    ),
+                                });
+                            }
+                            LibLookup::EntryNotFound(lib, entry) => {
+                                issues.push(ValidationIssue {
+                                    severity: Severity::Warn,
+                                    table: table.name.clone(),
+                                    file: csv_file.clone(),
+                                    row: Some(row_num),
+                                    id: Some(row_id.clone()),
+                                    message: format!(
+                                        "{} '{}' not found in library '{}'",
+                                        kind, entry, lib
+                                    ),
+                                });
+                            }
+                            LibLookup::LibraryUnreadable(_) => {
+                                // Skip silently — library might be on a network path
+                                tracing::debug!(
+                                    "library for {} '{}' is unreadable, skipping check",
+                                    kind,
+                                    value
+                                );
+                            }
+                        }
                     }
                 }
 
