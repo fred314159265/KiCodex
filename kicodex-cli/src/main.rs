@@ -117,7 +117,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Scan { path } => {
             run_scan(&path)?;
         }
-        Commands::Validate { path, project, json } => {
+        Commands::Validate {
+            path,
+            project,
+            json,
+        } => {
             let path = path.canonicalize().unwrap_or(path);
             let code = run_validate(&path, project.as_deref(), json)?;
             if code != 0 {
@@ -507,15 +511,14 @@ fn run_validate(
         .or_else(|| find_project_dir(path));
 
     // Try to load KiCad libraries (warn and skip if unavailable)
-    let kicad_libs = match kicodex_core::data::kicad_libs::KicadLibraries::load(
-        project_dir.as_deref(),
-    ) {
-        Ok(libs) => Some(libs),
-        Err(e) => {
-            tracing::warn!("Could not load KiCad library tables: {}", e);
-            None
-        }
-    };
+    let kicad_libs =
+        match kicodex_core::data::kicad_libs::KicadLibraries::load(project_dir.as_deref()) {
+            Ok(libs) => Some(libs),
+            Err(e) => {
+                tracing::warn!("Could not load KiCad library tables: {}", e);
+                None
+            }
+        };
 
     let mut total_exit_code = 0;
     for library_root in &library_roots {
@@ -543,13 +546,11 @@ fn find_project_dir(path: &std::path::Path) -> Option<std::path::PathBuf> {
         if std::fs::read_dir(&current)
             .ok()
             .map(|entries| {
-                entries
-                    .filter_map(|e| e.ok())
-                    .any(|e| {
-                        e.file_name()
-                            .to_str()
-                            .is_some_and(|n| n.ends_with(".kicad_pro"))
-                    })
+                entries.filter_map(|e| e.ok()).any(|e| {
+                    e.file_name()
+                        .to_str()
+                        .is_some_and(|n| n.ends_with(".kicad_pro"))
+                })
             })
             .unwrap_or(false)
         {

@@ -537,10 +537,7 @@ mod tests {
         let entries = parse_lib_table(content).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name, "Device");
-        assert_eq!(
-            entries[0].uri,
-            "${KICAD8_SYMBOL_DIR}/Device.kicad_sym"
-        );
+        assert_eq!(entries[0].uri, "${KICAD8_SYMBOL_DIR}/Device.kicad_sym");
         assert_eq!(entries[1].name, "Connector");
     }
 
@@ -619,10 +616,7 @@ mod tests {
         );
         let libs = RefCell::new(libs);
 
-        assert_eq!(
-            lazy_lookup(&libs, "Device:R", |_| None),
-            LibLookup::Found
-        );
+        assert_eq!(lazy_lookup(&libs, "Device:R", |_| None), LibLookup::Found);
     }
 
     #[test]
@@ -681,8 +675,7 @@ mod tests {
 
     #[test]
     fn test_extract_field_unquoted() {
-        let block =
-            r#"(lib (name Audio_Module)(type Kicad)(uri ${KICAD9_FOOTPRINT_DIR}/Audio_Module.pretty)(options "")(descr ""))"#;
+        let block = r#"(lib (name Audio_Module)(type Kicad)(uri ${KICAD9_FOOTPRINT_DIR}/Audio_Module.pretty)(options "")(descr ""))"#;
         assert_eq!(
             extract_field(block, "name"),
             Some("Audio_Module".to_string())
@@ -692,5 +685,4 @@ mod tests {
             Some("${KICAD9_FOOTPRINT_DIR}/Audio_Module.pretty".to_string())
         );
     }
-
 }
