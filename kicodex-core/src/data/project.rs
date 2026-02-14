@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
@@ -11,13 +11,13 @@ pub enum ProjectError {
 }
 
 /// Top-level structure of kicodex.yaml in a KiCad project.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProjectConfig {
     pub libraries: Vec<LibraryRef>,
 }
 
 /// A reference to a library directory within the project.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LibraryRef {
     pub name: String,
     pub path: String,

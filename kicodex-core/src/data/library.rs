@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
@@ -10,14 +10,16 @@ pub enum LibraryError {
     Yaml(#[from] serde_yml::Error),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LibraryManifest {
     pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub schemas_path: String,
     pub tables: Vec<TableDef>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TableDef {
     pub file: String,
     pub schema: String,

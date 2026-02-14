@@ -56,7 +56,8 @@ the underlying data in formats that produce clean git diffs (CSV, YAML, etc.).
 3. **`kicodex` CLI** - Command-line interface for:
    - `kicodex init` - Initialize a KiCad project to use KiCodex libraries
    - `kicodex serve` - Run the HTTP server without the tray app (headless mode)
-   - Other management commands as needed
+   - `kicodex new <name>` - Scaffold a new library or add a table to an existing one
+   - `kicodex scan` - Discover libraries and generate/update `kicodex.yaml`
 
 ### Token-Based Project Routing
 
