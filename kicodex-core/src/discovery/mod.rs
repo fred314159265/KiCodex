@@ -30,11 +30,7 @@ pub struct DiscoveryEngine {
 }
 
 impl DiscoveryEngine {
-    pub fn new(
-        persisted: PersistedRegistry,
-        registry: Arc<ProjectRegistry>,
-        port: u16,
-    ) -> Self {
+    pub fn new(persisted: PersistedRegistry, registry: Arc<ProjectRegistry>, port: u16) -> Self {
         Self {
             persisted,
             registry,
@@ -52,7 +48,10 @@ impl DiscoveryEngine {
     }
 
     /// Set a callback invoked whenever the set of active (open in KiCad) projects changes.
-    pub fn on_active_changed(mut self, cb: impl Fn(&[std::path::PathBuf]) + Send + Sync + 'static) -> Self {
+    pub fn on_active_changed(
+        mut self,
+        cb: impl Fn(&[std::path::PathBuf]) + Send + Sync + 'static,
+    ) -> Self {
         self.on_active_changed = Some(Box::new(cb));
         self
     }
@@ -75,10 +74,7 @@ impl DiscoveryEngine {
         // Initial process scan
         let initial_dirs = process_scanner::scan_kicad_processes();
         if !initial_dirs.is_empty() {
-            tracing::info!(
-                "Initial scan found {} KiCad project(s)",
-                initial_dirs.len()
-            );
+            tracing::info!("Initial scan found {} KiCad project(s)", initial_dirs.len());
         }
 
         for dir in &initial_dirs {
@@ -162,12 +158,8 @@ impl DiscoveryEngine {
     }
 
     fn try_register(&mut self, dir: &std::path::Path) {
-        match auto_register::try_auto_register(
-            dir,
-            &mut self.persisted,
-            &self.registry,
-            self.port,
-        ) {
+        match auto_register::try_auto_register(dir, &mut self.persisted, &self.registry, self.port)
+        {
             Ok(count) if count > 0 => {
                 tracing::info!(
                     "Auto-registered {} library/libraries from {}",
@@ -180,11 +172,7 @@ impl DiscoveryEngine {
             }
             Ok(_) => {}
             Err(e) => {
-                tracing::debug!(
-                    "Could not auto-register {}: {}",
-                    dir.display(),
-                    e
-                );
+                tracing::debug!("Could not auto-register {}: {}", dir.display(), e);
             }
         }
     }

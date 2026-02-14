@@ -63,8 +63,9 @@ impl PersistedRegistry {
     /// Add or update a project entry. Removes any existing entry with the same
     /// project_path or library_path to avoid stale duplicates.
     pub fn upsert(&mut self, entry: ProjectEntry) {
-        self.projects
-            .retain(|p| p.project_path != entry.project_path && p.library_path != entry.library_path);
+        self.projects.retain(|p| {
+            p.project_path != entry.project_path && p.library_path != entry.library_path
+        });
         self.projects.push(entry);
     }
 
@@ -100,8 +101,7 @@ impl ProjectRegistry {
 
     /// Insert a loaded library under the given token.
     pub fn insert(&self, token: &str, library: LoadedLibrary) {
-        self.libraries
-            .insert(token.to_string(), Arc::new(library));
+        self.libraries.insert(token.to_string(), Arc::new(library));
     }
 
     /// Build a runtime registry from a persisted registry, loading all libraries.
@@ -120,11 +120,7 @@ impl ProjectRegistry {
                     libraries.insert(entry.token.clone(), Arc::new(library));
                 }
                 Err(e) => {
-                    tracing::error!(
-                        "Failed to load library for project '{}': {}",
-                        entry.name,
-                        e
-                    );
+                    tracing::error!("Failed to load library for project '{}': {}", entry.name, e);
                 }
             }
         }
@@ -246,7 +242,11 @@ mod tests {
     #[test]
     fn test_persisted_registry_creates_parent_dirs() {
         let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("subdir").join("nested").join("projects.json");
+        let path = tmp
+            .path()
+            .join("subdir")
+            .join("nested")
+            .join("projects.json");
         let registry = PersistedRegistry::default();
         registry.save(&path).unwrap();
         assert!(path.exists());

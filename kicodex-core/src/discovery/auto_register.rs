@@ -92,14 +92,25 @@ pub fn try_auto_register(
 
     for lib_ref in &config.libraries {
         // Check if already registered by matching project_path + library name
-        let existing = persisted.projects.iter().find(|p| {
-            p.project_path == project_path_str && p.name == lib_ref.name
-        });
+        let existing = persisted
+            .projects
+            .iter()
+            .find(|p| p.project_path == project_path_str && p.name == lib_ref.name);
 
         if let Some(entry) = existing {
             // Already registered — just ensure the .kicad_httplib file is correct
-            if let Err(e) = ensure_httplib_file(project_dir, &lib_ref.name, entry.description.as_deref(), &entry.token, port) {
-                tracing::warn!("Failed to update .kicad_httplib for {}: {}", lib_ref.name, e);
+            if let Err(e) = ensure_httplib_file(
+                project_dir,
+                &lib_ref.name,
+                entry.description.as_deref(),
+                &entry.token,
+                port,
+            ) {
+                tracing::warn!(
+                    "Failed to update .kicad_httplib for {}: {}",
+                    lib_ref.name,
+                    e
+                );
             }
             continue;
         }
@@ -133,8 +144,14 @@ pub fn try_auto_register(
         registry.insert(&token, library);
 
         // Write .kicad_httplib file
-        ensure_httplib_file(project_dir, &lib_ref.name, description.as_deref(), &token, port)
-            .map_err(AutoRegisterError::Io)?;
+        ensure_httplib_file(
+            project_dir,
+            &lib_ref.name,
+            description.as_deref(),
+            &token,
+            port,
+        )
+        .map_err(AutoRegisterError::Io)?;
 
         newly_registered += 1;
     }
@@ -231,8 +248,7 @@ tables:
         let mut persisted = PersistedRegistry::default();
         let registry = Arc::new(ProjectRegistry::new());
 
-        let count =
-            try_auto_register(project_dir, &mut persisted, &registry, 18734).unwrap();
+        let count = try_auto_register(project_dir, &mut persisted, &registry, 18734).unwrap();
 
         assert_eq!(count, 1);
         assert_eq!(persisted.projects.len(), 1);
@@ -259,8 +275,7 @@ tables:
         });
 
         let registry = Arc::new(ProjectRegistry::new());
-        let count =
-            try_auto_register(project_dir, &mut persisted, &registry, 18734).unwrap();
+        let count = try_auto_register(project_dir, &mut persisted, &registry, 18734).unwrap();
 
         assert_eq!(count, 0);
     }
@@ -271,8 +286,7 @@ tables:
         let mut persisted = PersistedRegistry::default();
         let registry = Arc::new(ProjectRegistry::new());
 
-        let count =
-            try_auto_register(tmp.path(), &mut persisted, &registry, 18734).unwrap();
+        let count = try_auto_register(tmp.path(), &mut persisted, &registry, 18734).unwrap();
 
         assert_eq!(count, 0);
     }
@@ -297,8 +311,7 @@ tables:
         let httplib = project_dir.join("components.kicad_httplib");
         assert!(!httplib.exists());
 
-        let count =
-            try_auto_register(project_dir, &mut persisted, &registry, 18734).unwrap();
+        let count = try_auto_register(project_dir, &mut persisted, &registry, 18734).unwrap();
         assert_eq!(count, 0); // Not newly registered
 
         // But the file should now exist with the correct token

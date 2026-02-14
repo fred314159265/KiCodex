@@ -20,11 +20,7 @@ pub fn start_watching(
     for entry in &persisted.projects {
         let library_path = PathBuf::from(&entry.library_path);
         if library_path.exists() {
-            watch_entries.push((
-                library_path.clone(),
-                entry.token.clone(),
-                library_path,
-            ));
+            watch_entries.push((library_path.clone(), entry.token.clone(), library_path));
         }
     }
 
@@ -59,10 +55,7 @@ pub fn start_watching(
                             continue;
                         }
                         let path = &event.path;
-                        let ext = path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("");
+                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
                         if !matches!(ext, "csv" | "yaml" | "yml") {
                             continue;

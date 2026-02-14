@@ -70,10 +70,7 @@ impl LockWatcher {
                                 continue;
                             }
                             let path = &event.path;
-                            let ext = path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("");
+                            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
                             if ext != "lck" {
                                 continue;
@@ -92,9 +89,7 @@ impl LockWatcher {
                                     let has_remaining_locks = std::fs::read_dir(&dir)
                                         .map(|entries| {
                                             entries.filter_map(|e| e.ok()).any(|e| {
-                                                e.path()
-                                                    .extension()
-                                                    .and_then(|ext| ext.to_str())
+                                                e.path().extension().and_then(|ext| ext.to_str())
                                                     == Some("lck")
                                             })
                                         })

@@ -42,7 +42,6 @@ pub struct FieldDef {
     pub field_type: Option<String>,
 }
 
-
 /// A fully resolved schema with inherited fields merged in.
 #[derive(Debug, Clone)]
 pub struct ResolvedSchema {
