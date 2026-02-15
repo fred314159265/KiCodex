@@ -114,3 +114,9 @@ pub struct RawTemplateInput {
     pub exclude_from_sim: bool,
     pub fields: Vec<FieldInfo>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RenameEntry {
+    pub from: String,
+    pub to: String,
+}

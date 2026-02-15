@@ -722,11 +722,42 @@ pub fn save_template(
     lib_path: String,
     template_name: String,
     template: RawTemplateInput,
+    renames: Option<Vec<RenameEntry>>,
+    deletions: Option<Vec<String>>,
 ) -> Result<(), String> {
     let library_root = PathBuf::from(&lib_path);
     let manifest = kicodex_core::data::library::load_library_manifest(&library_root)
         .map_err(|e| e.to_string())?;
     let templates_dir = library_root.join(&manifest.templates_path);
+
+    // Apply CSV migrations before writing the template
+    let has_renames = renames.as_ref().is_some_and(|r| !r.is_empty());
+    let has_deletions = deletions.as_ref().is_some_and(|d| !d.is_empty());
+
+    if has_renames || has_deletions {
+        // Find all component types using this template
+        let csv_paths: Vec<std::path::PathBuf> = manifest
+            .component_types
+            .iter()
+            .filter(|ct| ct.template == template_name)
+            .map(|ct| library_root.join(&ct.file))
+            .collect();
+
+        for csv_path in &csv_paths {
+            if let Some(ref renames) = renames {
+                let rename_pairs: Vec<(String, String)> = renames
+                    .iter()
+                    .map(|r| (r.from.clone(), r.to.clone()))
+                    .collect();
+                kicodex_core::data::csv_loader::rename_csv_columns(csv_path, &rename_pairs)
+                    .map_err(|e| format!("Failed to rename CSV columns in {}: {}", csv_path.display(), e))?;
+            }
+            if let Some(ref deletions) = deletions {
+                kicodex_core::data::csv_loader::remove_csv_columns(csv_path, deletions)
+                    .map_err(|e| format!("Failed to remove CSV columns in {}: {}", csv_path.display(), e))?;
+            }
+        }
+    }
 
     let mut fields = indexmap::IndexMap::new();
     for f in &template.fields {

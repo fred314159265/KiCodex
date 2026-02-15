@@ -215,6 +215,59 @@ pub fn update_row(path: &Path, id: &str, fields: &CsvRow) -> Result<(), CsvError
     }
 }
 
+/// Rename columns in a CSV file. Each entry in `renames` is `(old_key, new_key)`.
+/// Columns not found are silently skipped. Writes back via `write_csv`.
+pub fn rename_csv_columns(path: &Path, renames: &[(String, String)]) -> Result<(), CsvError> {
+    if renames.is_empty() || !path.exists() {
+        return Ok(());
+    }
+
+    let mut rows = load_csv_with_ids(path)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    // Build a rename map from old_key -> new_key
+    let rename_map: std::collections::HashMap<&str, &str> = renames
+        .iter()
+        .map(|(old, new)| (old.as_str(), new.as_str()))
+        .collect();
+
+    // Rewrite each row's keys
+    for row in &mut rows {
+        let old_row = std::mem::take(row);
+        for (key, value) in old_row {
+            let new_key = match rename_map.get(key.as_str()) {
+                Some(&renamed) => renamed.to_string(),
+                None => key,
+            };
+            row.insert(new_key, value);
+        }
+    }
+
+    write_csv(path, &rows)
+}
+
+/// Remove columns from a CSV file. Columns not found are silently skipped.
+pub fn remove_csv_columns(path: &Path, columns: &[String]) -> Result<(), CsvError> {
+    if columns.is_empty() || !path.exists() {
+        return Ok(());
+    }
+
+    let mut rows = load_csv_with_ids(path)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let to_remove: HashSet<&str> = columns.iter().map(|s| s.as_str()).collect();
+
+    for row in &mut rows {
+        row.retain(|key, _| !to_remove.contains(key.as_str()));
+    }
+
+    write_csv(path, &rows)
+}
+
 // Aliases for component-based naming convention
 pub fn append_component(path: &Path, fields: &CsvRow) -> Result<String, CsvError> {
     append_row(path, fields)
@@ -329,6 +382,99 @@ mod tests {
         // Verify writeback includes id column
         let content = fs::read_to_string(&csv_path).unwrap();
         assert!(content.starts_with("id,mpn,value"));
+    }
+
+    #[test]
+    fn test_rename_csv_columns() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        fs::write(
+            &csv_path,
+            "id,mpn,value\n1,RC0603FR-0710KL,10K\n2,RC0603FR-07100KL,100K\n",
+        )
+        .unwrap();
+
+        rename_csv_columns(
+            &csv_path,
+            &[("mpn".to_string(), "manufacturer_pn".to_string())],
+        )
+        .unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].contains_key("manufacturer_pn"));
+        assert!(!rows[0].contains_key("mpn"));
+        assert_eq!(rows[0]["manufacturer_pn"], "RC0603FR-0710KL");
+        assert_eq!(rows[1]["manufacturer_pn"], "RC0603FR-07100KL");
+        // Other columns unchanged
+        assert_eq!(rows[0]["value"], "10K");
+    }
+
+    #[test]
+    fn test_rename_csv_columns_missing_column() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        fs::write(
+            &csv_path,
+            "id,mpn,value\n1,RC0603FR-0710KL,10K\n",
+        )
+        .unwrap();
+
+        // Renaming a non-existent column should succeed silently
+        rename_csv_columns(
+            &csv_path,
+            &[("nonexistent".to_string(), "something".to_string())],
+        )
+        .unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows[0]["mpn"], "RC0603FR-0710KL");
+    }
+
+    #[test]
+    fn test_remove_csv_columns() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        fs::write(
+            &csv_path,
+            "id,mpn,value,description\n1,RC0603FR-0710KL,10K,some desc\n2,RC0603FR-07100KL,100K,other desc\n",
+        )
+        .unwrap();
+
+        remove_csv_columns(&csv_path, &["description".to_string()]).unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(!rows[0].contains_key("description"));
+        assert_eq!(rows[0]["mpn"], "RC0603FR-0710KL");
+        assert_eq!(rows[0]["value"], "10K");
+    }
+
+    #[test]
+    fn test_remove_csv_columns_nonexistent() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("test.csv");
+        fs::write(
+            &csv_path,
+            "id,mpn,value\n1,RC0603FR-0710KL,10K\n",
+        )
+        .unwrap();
+
+        // Removing a non-existent column should succeed silently
+        remove_csv_columns(&csv_path, &["nonexistent".to_string()]).unwrap();
+
+        let rows = load_csv_with_ids(&csv_path).unwrap();
+        assert_eq!(rows[0]["mpn"], "RC0603FR-0710KL");
+    }
+
+    #[test]
+    fn test_rename_and_remove_on_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let csv_path = tmp.path().join("does_not_exist.csv");
+
+        // Both should succeed silently on missing files
+        rename_csv_columns(&csv_path, &[("a".to_string(), "b".to_string())]).unwrap();
+        remove_csv_columns(&csv_path, &["a".to_string()]).unwrap();
     }
 
     #[test]

@@ -92,7 +92,7 @@ pub fn build_router(registry: Arc<ProjectRegistry>) -> Router {
 }
 
 /// Start the server in single-library mode (Phase 1 compatible).
-pub async fn run_server(library_root: &Path, port: u16) -> Result<(), ServerError> {
+pub async fn run_server(library_root: &Path, port: u16, host: &str) -> Result<(), ServerError> {
     let library = load_library(library_root)?;
     tracing::info!(
         "Loaded library '{}' with {} component type(s)",
@@ -108,7 +108,7 @@ pub async fn run_server(library_root: &Path, port: u16) -> Result<(), ServerErro
     registry.insert(&token, library);
 
     let app = build_router(Arc::new(registry));
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("{host}:{port}");
     tracing::info!("Starting KiCodex server on http://{addr}");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -121,9 +121,10 @@ pub async fn run_server(library_root: &Path, port: u16) -> Result<(), ServerErro
 pub async fn run_server_with_registry(
     registry: Arc<ProjectRegistry>,
     port: u16,
+    host: &str,
 ) -> Result<(), ServerError> {
     let app = build_router(registry);
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("{host}:{port}");
     tracing::info!("Starting KiCodex server on http://{addr}");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;

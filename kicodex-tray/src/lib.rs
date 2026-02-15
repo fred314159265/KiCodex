@@ -156,7 +156,7 @@ pub fn run() {
             let server_registry = registry.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) =
-                    kicodex_core::server::run_server_with_registry(server_registry, port).await
+                    kicodex_core::server::run_server_with_registry(server_registry, port, "127.0.0.1").await
                 {
                     tracing::error!("HTTP server error: {}", e);
                 }

@@ -70,11 +70,15 @@ const TemplateEditorView = {
     );
     card.appendChild(fieldHeader);
 
+    // Track original field keys for rename/delete detection
+    const originalKeys = new Map(); // maps row object -> original key
+    const deletedFieldKeys = []; // keys of removed fields where user chose to also delete CSV data
+
     // Fields
     const fieldsContainer = h('div', { id: 'template-fields' });
     const fieldRows = [];
 
-    function addFieldRow(f = {}) {
+    function addFieldRow(f = {}, isExisting = false) {
       const row = {};
       const keyInput = h('input', { type: 'text', value: f.key || '', placeholder: 'field_key' });
       const nameInput = h('input', { type: 'text', value: f.display_name || '', placeholder: 'Display Name' });
@@ -93,6 +97,18 @@ const TemplateEditorView = {
       const removeBtn = h('button', { className: 'btn-icon', type: 'button', onClick: () => {
         const idx = fieldRows.indexOf(row);
         if (idx >= 0) {
+          const origKey = originalKeys.get(row);
+          if (origKey) {
+            // This field existed before — ask about CSV data deletion
+            const choice = confirm(
+              `Remove field '${origKey}'?\n\n` +
+              `OK = Also delete the '${origKey}' column and its data from all components using this template.\n` +
+              `Cancel = Remove from template only (CSV data is kept).`
+            );
+            if (choice) {
+              deletedFieldKeys.push(origKey);
+            }
+          }
           fieldRows.splice(idx, 1);
           rowEl.remove();
         }
@@ -104,6 +120,11 @@ const TemplateEditorView = {
       row.typeSelect = typeSelect;
       row.reqCb = reqCb;
       row.visCb = visCb;
+
+      // Track original key for existing fields
+      if (isExisting && f.key) {
+        originalKeys.set(row, f.key);
+      }
 
       const rowEl = h('div', { className: 'schema-field-row' },
         keyInput, nameInput, descInput, typeSelect,
@@ -117,7 +138,7 @@ const TemplateEditorView = {
     }
 
     for (const f of template.fields) {
-      addFieldRow(f);
+      addFieldRow(f, true);
     }
 
     card.appendChild(fieldsContainer);
@@ -135,6 +156,16 @@ const TemplateEditorView = {
           description: r.descInput.value || null,
         })).filter(f => f.key);
 
+        // Compute renames: fields whose key changed from their original
+        const renames = [];
+        for (const row of fieldRows) {
+          const origKey = originalKeys.get(row);
+          const currentKey = row.keyInput.value;
+          if (origKey && currentKey && origKey !== currentKey) {
+            renames.push({ from: origKey, to: currentKey });
+          }
+        }
+
         try {
           await invoke('save_template', {
             libPath,
@@ -146,6 +177,8 @@ const TemplateEditorView = {
               exclude_from_sim: simCb.checked,
               fields,
             },
+            renames: renames.length > 0 ? renames : null,
+            deletions: deletedFieldKeys.length > 0 ? deletedFieldKeys : null,
           });
           navigate('project', { path: projectPath });
         } catch (e) {
