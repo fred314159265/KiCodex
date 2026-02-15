@@ -17,6 +17,7 @@ pub struct AppState {
     pub registry: Arc<ProjectRegistry>,
     pub port: u16,
     pub kicad_libs: std::sync::Mutex<Option<KicadLibraries>>,
+    pub validation_summary: std::sync::Mutex<Option<(usize, usize)>>,
 }
 
 /// An active project shown in the tray menu.
@@ -24,21 +25,6 @@ pub struct AppState {
 pub struct ActiveProject {
     pub name: String,
     pub project_path: PathBuf,
-}
-
-/// Build menu labels from active projects.
-fn menu_labels_from_active(active: &[ActiveProject]) -> Vec<String> {
-    active
-        .iter()
-        .map(|p| {
-            let dir_name = p
-                .project_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            format!("{} — {}", p.name, dir_name)
-        })
-        .collect()
 }
 
 /// Resolve active project dirs against the persisted registry to get display info.
@@ -69,6 +55,38 @@ fn resolve_active_projects(
         .collect()
 }
 
+/// Run validation across all registered projects and return (total_errors, total_warnings).
+fn run_validation_summary(persisted: &PersistedRegistry) -> (usize, usize) {
+    let mut total_errors = 0;
+    let mut total_warnings = 0;
+
+    // Collect unique library paths to avoid validating the same library twice
+    let mut seen_libs = std::collections::HashSet::new();
+
+    for entry in &persisted.projects {
+        if !seen_libs.insert(entry.library_path.clone()) {
+            continue;
+        }
+
+        let lib_path = entry.library_path
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&entry.library_path)
+            .to_string();
+
+        match commands::validate_library(lib_path, Some(entry.project_path.clone())) {
+            Ok(result) => {
+                total_errors += result.error_count;
+                total_warnings += result.warning_count;
+            }
+            Err(e) => {
+                tracing::warn!("Validation failed for {}: {}", entry.name, e);
+            }
+        }
+    }
+
+    (total_errors, total_warnings)
+}
+
 pub fn run() {
     let port: u16 = 18734;
 
@@ -79,6 +97,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            commands::remove_project,
             commands::get_projects,
             commands::get_project_libraries,
             commands::scan_for_libraries,
@@ -86,13 +105,13 @@ pub fn run() {
             commands::validate_library,
             commands::init_project,
             commands::create_library,
-            commands::add_table,
-            commands::get_table_rows,
-            commands::add_row,
-            commands::update_row,
-            commands::delete_row,
-            commands::get_schema,
-            commands::save_schema,
+            commands::add_component_type,
+            commands::get_component_type_data,
+            commands::add_component,
+            commands::update_component,
+            commands::delete_component,
+            commands::get_template,
+            commands::save_template,
             commands::list_kicad_libraries,
             commands::list_kicad_entries,
             commands::open_in_explorer,
@@ -159,7 +178,8 @@ pub fn run() {
             let tray = app.tray_by_id("main");
 
             if let Some(tray) = &tray {
-                let menu = tray::build_menu(app.handle(), &[]).expect("Failed to build tray menu");
+                let menu =
+                    tray::build_menu(app.handle(), &[], None).expect("Failed to build tray menu");
                 tray.set_menu(Some(menu)).expect("Failed to set tray menu");
                 let _ = tray.set_tooltip(Some("KiCodex — scanning..."));
 
@@ -177,6 +197,7 @@ pub fn run() {
                 registry: registry.clone(),
                 port,
                 kicad_libs: std::sync::Mutex::new(kicad_libs),
+                validation_summary: std::sync::Mutex::new(None),
             };
             app.manage(state);
 
@@ -203,12 +224,34 @@ pub fn run() {
                     if let Some(state) = app_handle_active.try_state::<AppState>() {
                         let persisted = state.persisted.lock().unwrap();
                         let active = resolve_active_projects(active_dirs, &persisted);
-                        let labels = menu_labels_from_active(&active);
-                        *state.active_projects.lock().unwrap() = active;
+                        *state.active_projects.lock().unwrap() = active.clone();
+                        drop(persisted);
 
+                        // Update menu immediately with current validation (may be None)
+                        let validation = *state.validation_summary.lock().unwrap();
                         if let Some(tray) = app_handle_active.tray_by_id("main") {
-                            tray::update_menu(&app_handle_active, &tray, &labels);
+                            tray::update_menu(&app_handle_active, &tray, &active, validation);
                         }
+
+                        // Spawn async validation in background
+                        let app_for_validation = app_handle_active.clone();
+                        let persisted_snapshot = state.persisted.lock().unwrap().clone();
+                        std::thread::spawn(move || {
+                            let summary = run_validation_summary(&persisted_snapshot);
+
+                            if let Some(state) = app_for_validation.try_state::<AppState>() {
+                                *state.validation_summary.lock().unwrap() = Some(summary);
+                                let active = state.active_projects.lock().unwrap().clone();
+                                if let Some(tray) = app_for_validation.tray_by_id("main") {
+                                    tray::update_menu(
+                                        &app_for_validation,
+                                        &tray,
+                                        &active,
+                                        Some(summary),
+                                    );
+                                }
+                            }
+                        });
                     }
                     let _ = app_handle_active.emit("projects-changed", ());
                 });

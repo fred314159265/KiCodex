@@ -31,6 +31,45 @@ fn reload_registry_for_path(state: &AppState, lib_path: &std::path::Path) {
 }
 
 #[tauri::command]
+pub fn remove_project(state: State<'_, AppState>, project_path: String) -> Result<usize, String> {
+    let registry_path = kicodex_core::registry::PersistedRegistry::default_path()
+        .ok_or_else(|| "Could not determine config directory".to_string())?;
+
+    let mut persisted = state.persisted.lock().unwrap();
+
+    // Collect entries matching this project path
+    let entries: Vec<_> = persisted
+        .projects
+        .iter()
+        .filter(|p| p.project_path == project_path)
+        .cloned()
+        .collect();
+
+    let count = entries.len();
+
+    // Remove from runtime registry and delete .kicad_httplib files
+    for entry in &entries {
+        state.registry.remove(&entry.token);
+
+        // Delete .kicad_httplib from the library directory
+        let lib_dir = PathBuf::from(&entry.library_path);
+        let httplib_in_lib = lib_dir.join(format!("{}.kicad_httplib", entry.name));
+        let _ = std::fs::remove_file(&httplib_in_lib);
+
+        // Delete .kicad_httplib from the project directory
+        let proj_dir = PathBuf::from(&entry.project_path);
+        let httplib_in_proj = proj_dir.join(format!("{}.kicad_httplib", entry.name));
+        let _ = std::fs::remove_file(&httplib_in_proj);
+    }
+
+    // Remove from persisted registry and save
+    persisted.remove_by_path(&project_path);
+    persisted.save(&registry_path).map_err(|e| e.to_string())?;
+
+    Ok(count)
+}
+
+#[tauri::command]
 pub fn get_projects(state: State<'_, AppState>) -> Result<Vec<ProjectInfo>, String> {
     let persisted = state.persisted.lock().unwrap();
     let active = state.active_projects.lock().unwrap();
@@ -41,10 +80,11 @@ pub fn get_projects(state: State<'_, AppState>) -> Result<Vec<ProjectInfo>, Stri
 
     let mut projects = Vec::new();
     for entry in &persisted.projects {
-        let table_count = state
+        let component_type_count = state
             .registry
             .get(&entry.token)
-            .map(|lib| lib.tables.len())
+            .map(|lib| lib.component_types.len())
+
             .unwrap_or(0);
 
         let clean_lib_path = entry.library_path
@@ -57,7 +97,7 @@ pub fn get_projects(state: State<'_, AppState>) -> Result<Vec<ProjectInfo>, Stri
             project_path: entry.project_path.clone(),
             library_path: clean_lib_path,
             active: active_paths.contains(&entry.project_path),
-            table_count,
+            component_type_count,
         });
     }
     Ok(projects)
@@ -95,19 +135,19 @@ pub fn get_project_libraries(
 
         let manifest = kicodex_core::data::library::load_library_manifest(&library_root).ok();
 
-        let table_files: std::collections::HashMap<String, String> = manifest
+        let ct_files: std::collections::HashMap<String, String> = manifest
             .as_ref()
-            .map(|m| m.tables.iter().map(|t| (t.name.clone(), t.file.clone())).collect())
+            .map(|m| m.component_types.iter().map(|t| (t.name.clone(), t.file.clone())).collect())
             .unwrap_or_default();
 
-        let tables = lib
-            .tables
+        let component_types = lib
+            .component_types
             .iter()
-            .map(|t| TableInfo {
-                name: t.name.clone(),
-                schema_name: t.schema_name.clone(),
-                row_count: t.rows.len(),
-                file: table_files.get(&t.name).cloned().unwrap_or_default(),
+            .map(|ct| ComponentTypeInfo {
+                name: ct.name.clone(),
+                template_name: ct.template_name.clone(),
+                component_count: ct.components.len(),
+                file: ct_files.get(&ct.name).cloned().unwrap_or_default(),
             })
             .collect();
 
@@ -115,7 +155,7 @@ pub fn get_project_libraries(
             name: lib.name.clone(),
             path: clean_path,
             description: lib.description.clone(),
-            tables,
+            component_types,
         });
     }
     Ok(libraries)
@@ -206,22 +246,22 @@ pub fn validate_library(
     let kicad_libs =
         kicodex_core::data::kicad_libs::KicadLibraries::load(project_dir.as_deref()).ok();
 
-    let table_files: std::collections::HashMap<String, String> = manifest
-        .tables
+    let ct_files: std::collections::HashMap<String, String> = manifest
+        .component_types
         .iter()
         .map(|t| (t.name.clone(), t.file.clone()))
         .collect();
 
-    let mut table_results = Vec::new();
+    let mut ct_results = Vec::new();
 
-    for table in &library.tables {
-        let csv_file = table_files
-            .get(&table.name)
+    for ct in &library.component_types {
+        let csv_file = ct_files
+            .get(&ct.name)
             .cloned()
-            .unwrap_or_else(|| table.schema_name.clone());
+            .unwrap_or_else(|| ct.template_name.clone());
 
-        let csv_headers: HashSet<&String> = table
-            .rows
+        let csv_headers: HashSet<&String> = ct
+            .components
             .first()
             .map(|r| r.keys().collect())
             .unwrap_or_default();
@@ -230,7 +270,7 @@ pub fn validate_library(
         let mut warnings = Vec::new();
 
         // Check required fields as columns
-        for (field_name, field_def) in &table.schema.fields {
+        for (field_name, field_def) in &ct.template.fields {
             if field_def.required && !csv_headers.contains(field_name) {
                 errors.push(ValidationIssue {
                     row: None,
@@ -246,7 +286,7 @@ pub fn validate_library(
         // Per-row checks
         let mut seen_ids: HashSet<String> = HashSet::new();
 
-        for (row_idx, row) in table.rows.iter().enumerate() {
+        for (row_idx, row) in ct.components.iter().enumerate() {
             let row_num = row_idx + 1;
             let row_id = row.get("id").cloned().unwrap_or_default();
 
@@ -258,7 +298,7 @@ pub fn validate_library(
                 });
             }
 
-            for (field_name, field_def) in &table.schema.fields {
+            for (field_name, field_def) in &ct.template.fields {
                 let value = row.get(field_name).map(|s| s.as_str()).unwrap_or("");
                 let field_type = field_def.field_type.as_deref();
 
@@ -358,20 +398,20 @@ pub fn validate_library(
             }
         }
 
-        table_results.push(ValidationTableResult {
-            name: table.name.clone(),
+        ct_results.push(ValidationComponentTypeResult {
+            name: ct.name.clone(),
             file: csv_file,
             errors,
             warnings,
         });
     }
 
-    let error_count: usize = table_results.iter().map(|t| t.errors.len()).sum();
-    let warning_count: usize = table_results.iter().map(|t| t.warnings.len()).sum();
+    let error_count: usize = ct_results.iter().map(|t| t.errors.len()).sum();
+    let warning_count: usize = ct_results.iter().map(|t| t.warnings.len()).sum();
 
     Ok(ValidationResult {
         library: library.name,
-        tables: table_results,
+        component_types: ct_results,
         error_count,
         warning_count,
     })
@@ -453,15 +493,15 @@ pub fn create_library(name: String, parent_dir: String) -> Result<String, String
     }
 
     std::fs::create_dir_all(&lib_dir).map_err(|e| e.to_string())?;
-    let schemas_dir = lib_dir.join("schemas");
-    std::fs::create_dir_all(&schemas_dir).map_err(|e| e.to_string())?;
+    let templates_dir = lib_dir.join("schemas");
+    std::fs::create_dir_all(&templates_dir).map_err(|e| e.to_string())?;
 
-    // Write library.yaml with no tables — user adds tables afterward
+    // Write library.yaml with no component types — user adds them afterward
     let manifest = kicodex_core::data::library::LibraryManifest {
         name: name.clone(),
         description: Some(format!("KiCodex library: {}", name)),
-        schemas_path: "schemas".to_string(),
-        tables: Vec::new(),
+        templates_path: "schemas".to_string(),
+        component_types: Vec::new(),
     };
     kicodex_core::data::library::save_library_manifest(&lib_dir, &manifest)
         .map_err(|e| e.to_string())?;
@@ -470,37 +510,37 @@ pub fn create_library(name: String, parent_dir: String) -> Result<String, String
 }
 
 #[tauri::command]
-pub fn add_table(state: State<'_, AppState>, lib_path: String, table_name: String) -> Result<(), String> {
+pub fn add_component_type(state: State<'_, AppState>, lib_path: String, component_type_name: String) -> Result<(), String> {
     let lib_dir = PathBuf::from(&lib_path);
     let mut manifest = kicodex_core::data::library::load_library_manifest(&lib_dir)
         .map_err(|e| e.to_string())?;
 
-    if manifest.tables.iter().any(|t| t.schema == table_name) {
-        return Err(format!("Table '{}' already exists", table_name));
+    if manifest.component_types.iter().any(|t| t.template == component_type_name) {
+        return Err(format!("Component type '{}' already exists", component_type_name));
     }
 
-    let schemas_dir = lib_dir.join(&manifest.schemas_path);
-    std::fs::create_dir_all(&schemas_dir).map_err(|e| e.to_string())?;
+    let templates_dir = lib_dir.join(&manifest.templates_path);
+    std::fs::create_dir_all(&templates_dir).map_err(|e| e.to_string())?;
 
-    // Write schema
-    let schema_content = "fields:\n  value:\n    display_name: Name\n    visible: true\n  description:\n    display_name: Description\n    visible: true\n  footprint:\n    display_name: Footprint\n    visible: true\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: true\n    type: kicad_symbol\n";
+    // Write template
+    let template_content = "fields:\n  value:\n    display_name: Name\n    visible: true\n  description:\n    display_name: Description\n    visible: true\n  footprint:\n    display_name: Footprint\n    visible: true\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: true\n    type: kicad_symbol\n";
     std::fs::write(
-        schemas_dir.join(format!("{}.yaml", table_name)),
-        schema_content,
+        templates_dir.join(format!("{}.yaml", component_type_name)),
+        template_content,
     )
     .map_err(|e| e.to_string())?;
 
     // Write CSV
     std::fs::write(
-        lib_dir.join(format!("{}.csv", table_name)),
+        lib_dir.join(format!("{}.csv", component_type_name)),
         "id,mpn,value,description,footprint,symbol\n",
     )
     .map_err(|e| e.to_string())?;
 
-    manifest.tables.push(kicodex_core::data::library::TableDef {
-        name: table_name.clone(),
-        file: format!("{}.csv", table_name),
-        schema: table_name,
+    manifest.component_types.push(kicodex_core::data::library::ComponentTypeDef {
+        name: component_type_name.clone(),
+        file: format!("{}.csv", component_type_name),
+        template: component_type_name,
     });
 
     kicodex_core::data::library::save_library_manifest(&lib_dir, &manifest)
@@ -512,22 +552,22 @@ pub fn add_table(state: State<'_, AppState>, lib_path: String, table_name: Strin
 }
 
 #[tauri::command]
-pub fn get_table_rows(
+pub fn get_component_type_data(
     lib_path: String,
-    table_name: String,
-) -> Result<TableData, String> {
+    component_type_name: String,
+) -> Result<ComponentTypeData, String> {
     let library_root = PathBuf::from(&lib_path);
     let library =
         kicodex_core::server::load_library(&library_root).map_err(|e| e.to_string())?;
 
-    let table = library
-        .tables
+    let ct = library
+        .component_types
         .iter()
-        .find(|t| t.name == table_name || t.schema_name == table_name)
-        .ok_or_else(|| format!("Table '{}' not found", table_name))?;
+        .find(|t| t.name == component_type_name || t.template_name == component_type_name)
+        .ok_or_else(|| format!("Component type '{}' not found", component_type_name))?;
 
-    let fields: Vec<FieldInfo> = table
-        .schema
+    let fields: Vec<FieldInfo> = ct
+        .template
         .fields
         .iter()
         .map(|(key, def)| FieldInfo {
@@ -540,38 +580,39 @@ pub fn get_table_rows(
         })
         .collect();
 
-    Ok(TableData {
-        name: table.name.clone(),
-        schema: SchemaInfo {
-            inherits: None,
-            exclude_from_bom: table.schema.exclude_from_bom,
-            exclude_from_board: table.schema.exclude_from_board,
-            exclude_from_sim: table.schema.exclude_from_sim,
+    Ok(ComponentTypeData {
+        name: ct.name.clone(),
+        template_name: ct.template_name.clone(),
+        template: TemplateInfo {
+            based_on: None,
+            exclude_from_bom: ct.template.exclude_from_bom,
+            exclude_from_board: ct.template.exclude_from_board,
+            exclude_from_sim: ct.template.exclude_from_sim,
             fields,
         },
-        rows: table.rows.clone(),
+        components: ct.components.clone(),
     })
 }
 
 #[tauri::command]
-pub fn add_row(
+pub fn add_component(
     state: State<'_, AppState>,
     lib_path: String,
-    table_name: String,
+    component_type_name: String,
     fields: indexmap::IndexMap<String, String>,
 ) -> Result<String, String> {
     let library_root = PathBuf::from(&lib_path);
     let manifest = kicodex_core::data::library::load_library_manifest(&library_root)
         .map_err(|e| e.to_string())?;
 
-    let table_def = manifest
-        .tables
+    let ct_def = manifest
+        .component_types
         .iter()
-        .find(|t| t.name == table_name || t.schema == table_name)
-        .ok_or_else(|| format!("Table '{}' not found", table_name))?;
+        .find(|t| t.name == component_type_name || t.template == component_type_name)
+        .ok_or_else(|| format!("Component type '{}' not found", component_type_name))?;
 
-    let csv_path = library_root.join(&table_def.file);
-    let id = kicodex_core::data::csv_loader::append_row(&csv_path, &fields)
+    let csv_path = library_root.join(&ct_def.file);
+    let id = kicodex_core::data::csv_loader::append_component(&csv_path, &fields)
         .map_err(|e| e.to_string())?;
 
     reload_registry_for_path(&state, &library_root);
@@ -580,10 +621,10 @@ pub fn add_row(
 }
 
 #[tauri::command]
-pub fn update_row(
+pub fn update_component(
     state: State<'_, AppState>,
     lib_path: String,
-    table_name: String,
+    component_type_name: String,
     id: String,
     fields: indexmap::IndexMap<String, String>,
 ) -> Result<(), String> {
@@ -591,14 +632,14 @@ pub fn update_row(
     let manifest = kicodex_core::data::library::load_library_manifest(&library_root)
         .map_err(|e| e.to_string())?;
 
-    let table_def = manifest
-        .tables
+    let ct_def = manifest
+        .component_types
         .iter()
-        .find(|t| t.name == table_name || t.schema == table_name)
-        .ok_or_else(|| format!("Table '{}' not found", table_name))?;
+        .find(|t| t.name == component_type_name || t.template == component_type_name)
+        .ok_or_else(|| format!("Component type '{}' not found", component_type_name))?;
 
-    let csv_path = library_root.join(&table_def.file);
-    kicodex_core::data::csv_loader::update_row(&csv_path, &id, &fields)
+    let csv_path = library_root.join(&ct_def.file);
+    kicodex_core::data::csv_loader::update_component(&csv_path, &id, &fields)
         .map_err(|e| e.to_string())?;
 
     reload_registry_for_path(&state, &library_root);
@@ -607,24 +648,24 @@ pub fn update_row(
 }
 
 #[tauri::command]
-pub fn delete_row(
+pub fn delete_component(
     state: State<'_, AppState>,
     lib_path: String,
-    table_name: String,
+    component_type_name: String,
     id: String,
 ) -> Result<(), String> {
     let library_root = PathBuf::from(&lib_path);
     let manifest = kicodex_core::data::library::load_library_manifest(&library_root)
         .map_err(|e| e.to_string())?;
 
-    let table_def = manifest
-        .tables
+    let ct_def = manifest
+        .component_types
         .iter()
-        .find(|t| t.name == table_name || t.schema == table_name)
-        .ok_or_else(|| format!("Table '{}' not found", table_name))?;
+        .find(|t| t.name == component_type_name || t.template == component_type_name)
+        .ok_or_else(|| format!("Component type '{}' not found", component_type_name))?;
 
-    let csv_path = library_root.join(&table_def.file);
-    kicodex_core::data::csv_loader::delete_row(&csv_path, &id).map_err(|e| e.to_string())?;
+    let csv_path = library_root.join(&ct_def.file);
+    kicodex_core::data::csv_loader::delete_component(&csv_path, &id).map_err(|e| e.to_string())?;
 
     reload_registry_for_path(&state, &library_root);
 
@@ -632,25 +673,25 @@ pub fn delete_row(
 }
 
 #[tauri::command]
-pub fn get_schema(
+pub fn get_template(
     lib_path: String,
-    schema_name: String,
-) -> Result<SchemaInfo, String> {
+    template_name: String,
+) -> Result<TemplateInfo, String> {
     let library_root = PathBuf::from(&lib_path);
     let manifest = kicodex_core::data::library::load_library_manifest(&library_root)
         .map_err(|e| e.to_string())?;
-    let schemas_dir = library_root.join(&manifest.schemas_path);
+    let templates_dir = library_root.join(&manifest.templates_path);
 
-    // Load raw schema for inherits info
-    let schema_path = schemas_dir.join(format!("{}.yaml", schema_name));
-    let raw: Option<kicodex_core::data::schema::RawSchema> = if schema_path.exists() {
-        let content = std::fs::read_to_string(&schema_path).map_err(|e| e.to_string())?;
+    // Load raw template for based_on info
+    let template_path = templates_dir.join(format!("{}.yaml", template_name));
+    let raw: Option<kicodex_core::data::schema::RawTemplate> = if template_path.exists() {
+        let content = std::fs::read_to_string(&template_path).map_err(|e| e.to_string())?;
         Some(serde_yml::from_str(&content).map_err(|e| e.to_string())?)
     } else {
         None
     };
 
-    let resolved = kicodex_core::data::schema::load_schema(&schemas_dir, &schema_name)
+    let resolved = kicodex_core::data::schema::load_template(&templates_dir, &template_name)
         .map_err(|e| e.to_string())?;
 
     let fields: Vec<FieldInfo> = resolved
@@ -666,8 +707,8 @@ pub fn get_schema(
         })
         .collect();
 
-    Ok(SchemaInfo {
-        inherits: raw.and_then(|r| r.inherits),
+    Ok(TemplateInfo {
+        based_on: raw.and_then(|r| r.based_on),
         exclude_from_bom: resolved.exclude_from_bom,
         exclude_from_board: resolved.exclude_from_board,
         exclude_from_sim: resolved.exclude_from_sim,
@@ -676,19 +717,19 @@ pub fn get_schema(
 }
 
 #[tauri::command]
-pub fn save_schema(
+pub fn save_template(
     state: State<'_, AppState>,
     lib_path: String,
-    schema_name: String,
-    schema: RawSchemaInput,
+    template_name: String,
+    template: RawTemplateInput,
 ) -> Result<(), String> {
     let library_root = PathBuf::from(&lib_path);
     let manifest = kicodex_core::data::library::load_library_manifest(&library_root)
         .map_err(|e| e.to_string())?;
-    let schemas_dir = library_root.join(&manifest.schemas_path);
+    let templates_dir = library_root.join(&manifest.templates_path);
 
     let mut fields = indexmap::IndexMap::new();
-    for f in &schema.fields {
+    for f in &template.fields {
         fields.insert(
             f.key.clone(),
             kicodex_core::data::schema::FieldDef {
@@ -701,15 +742,15 @@ pub fn save_schema(
         );
     }
 
-    let raw = kicodex_core::data::schema::RawSchema {
-        inherits: schema.inherits,
-        exclude_from_bom: schema.exclude_from_bom,
-        exclude_from_board: schema.exclude_from_board,
-        exclude_from_sim: schema.exclude_from_sim,
+    let raw = kicodex_core::data::schema::RawTemplate {
+        based_on: template.based_on,
+        exclude_from_bom: template.exclude_from_bom,
+        exclude_from_board: template.exclude_from_board,
+        exclude_from_sim: template.exclude_from_sim,
         fields,
     };
 
-    kicodex_core::data::schema::write_schema(&schemas_dir, &schema_name, &raw)
+    kicodex_core::data::schema::write_template(&templates_dir, &template_name, &raw)
         .map_err(|e| e.to_string())?;
 
     reload_registry_for_path(&state, &library_root);
@@ -959,12 +1000,4 @@ pub fn add_git_library(
     }
 
     Ok(target.to_string_lossy().to_string())
-}
-
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-    }
 }

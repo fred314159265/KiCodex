@@ -18,10 +18,10 @@ pub async fn get_parts_by_category(
         .checked_sub(1)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let table = library.tables.get(idx).ok_or(StatusCode::NOT_FOUND)?;
+    let ct = library.component_types.get(idx).ok_or(StatusCode::NOT_FOUND)?;
 
-    let parts: Vec<PartSummary> = table
-        .rows
+    let parts: Vec<PartSummary> = ct
+        .components
         .iter()
         .map(|row| {
             let id = row.get("id").cloned().unwrap_or_default();
@@ -43,14 +43,14 @@ pub async fn get_part_detail(
     Path(part_id): Path<String>,
 ) -> Result<Json<PartDetail>, StatusCode> {
     let part_id = part_id.strip_suffix(".json").unwrap_or(&part_id);
-    // Search all tables for the part
-    for table in &library.tables {
-        if let Some(row) = table
-            .rows
+    // Search all component types for the part
+    for ct in &library.component_types {
+        if let Some(row) = ct
+            .components
             .iter()
             .find(|r| r.get("id").map(|s| s.as_str()) == Some(part_id))
         {
-            return Ok(Json(build_part_detail(row, &table.schema)));
+            return Ok(Json(build_part_detail(row, &ct.template)));
         }
     }
 

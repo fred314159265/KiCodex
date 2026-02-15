@@ -1,13 +1,13 @@
-// Schema editor view — edit field definitions
-const SchemaEditorView = {
+// Template editor view — edit field definitions
+const TemplateEditorView = {
   async render(container, params) {
     const libPath = params.lib;
-    const schemaName = params.schema;
+    const templateName = params.template;
     const projectPath = params.project;
 
-    if (!libPath || !schemaName) { navigate('dashboard'); return; }
+    if (!libPath || !templateName) { navigate('dashboard'); return; }
 
-    const schema = await invoke('get_schema', { libPath, schemaName });
+    const template = await invoke('get_template', { libPath, templateName });
 
     container.innerHTML = '';
 
@@ -16,28 +16,28 @@ const SchemaEditorView = {
       h('span', {}, ' / '),
       h('a', { href: `#project?path=${encodeURIComponent(projectPath)}` }, projectPath.split(/[\\/]/).pop()),
       h('span', {}, ' / '),
-      h('span', {}, `Schema: ${schemaName}`),
+      h('span', {}, `Template: ${templateName}`),
     );
     container.appendChild(bc);
 
     const header = h('div', { className: 'page-header' },
-      h('h2', { className: 'page-title' }, `Schema: ${schemaName}`),
+      h('h2', { className: 'page-title' }, `Template: ${templateName}`),
     );
     container.appendChild(header);
 
     const card = h('div', { className: 'card' });
 
-    // Inherits selector
-    const inheritsGroup = h('div', { className: 'form-group' });
-    inheritsGroup.appendChild(h('label', { className: 'form-label' }, 'Inherits'));
-    const inheritsInput = h('input', {
+    // Based-on selector
+    const basedOnGroup = h('div', { className: 'form-group' });
+    basedOnGroup.appendChild(h('label', { className: 'form-label' }, 'Based On'));
+    const basedOnInput = h('input', {
       className: 'form-input',
       type: 'text',
-      value: schema.inherits || '',
+      value: template.based_on || '',
       placeholder: '_base (or leave empty)',
     });
-    inheritsGroup.appendChild(inheritsInput);
-    card.appendChild(inheritsGroup);
+    basedOnGroup.appendChild(basedOnInput);
+    card.appendChild(basedOnGroup);
 
     // Default Exclude Flags
     const flagsHeading = h('div', { style: { marginBottom: '8px' } },
@@ -47,11 +47,11 @@ const SchemaEditorView = {
     card.appendChild(flagsHeading);
     const flagsRow = h('div', { style: { display: 'flex', gap: '16px', marginBottom: '16px' } });
     const bomCb = h('input', { type: 'checkbox' });
-    if (schema.exclude_from_bom) bomCb.checked = true;
+    if (template.exclude_from_bom) bomCb.checked = true;
     const boardCb = h('input', { type: 'checkbox' });
-    if (schema.exclude_from_board) boardCb.checked = true;
+    if (template.exclude_from_board) boardCb.checked = true;
     const simCb = h('input', { type: 'checkbox' });
-    if (schema.exclude_from_sim) simCb.checked = true;
+    if (template.exclude_from_sim) simCb.checked = true;
 
     flagsRow.appendChild(h('label', { style: { fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' } }, bomCb, 'Exclude from BOM'));
     flagsRow.appendChild(h('label', { style: { fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' } }, boardCb, 'Exclude from Board'));
@@ -71,7 +71,7 @@ const SchemaEditorView = {
     card.appendChild(fieldHeader);
 
     // Fields
-    const fieldsContainer = h('div', { id: 'schema-fields' });
+    const fieldsContainer = h('div', { id: 'template-fields' });
     const fieldRows = [];
 
     function addFieldRow(f = {}) {
@@ -116,7 +116,7 @@ const SchemaEditorView = {
       fieldsContainer.appendChild(rowEl);
     }
 
-    for (const f of schema.fields) {
+    for (const f of template.fields) {
       addFieldRow(f);
     }
 
@@ -136,11 +136,11 @@ const SchemaEditorView = {
         })).filter(f => f.key);
 
         try {
-          await invoke('save_schema', {
+          await invoke('save_template', {
             libPath,
-            schemaName,
-            schema: {
-              inherits: inheritsInput.value || null,
+            templateName,
+            template: {
+              based_on: basedOnInput.value || null,
               exclude_from_bom: bomCb.checked,
               exclude_from_board: boardCb.checked,
               exclude_from_sim: simCb.checked,
@@ -151,7 +151,7 @@ const SchemaEditorView = {
         } catch (e) {
           alert('Error: ' + e);
         }
-      }}, 'Save Schema'),
+      }}, 'Save Template'),
     );
     card.appendChild(actions);
 

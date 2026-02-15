@@ -15,14 +15,17 @@ pub struct LibraryManifest {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
-    pub schemas_path: String,
-    pub tables: Vec<TableDef>,
+    #[serde(alias = "schemas_path")]
+    pub templates_path: String,
+    #[serde(alias = "tables")]
+    pub component_types: Vec<ComponentTypeDef>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TableDef {
+pub struct ComponentTypeDef {
     pub file: String,
-    pub schema: String,
+    #[serde(alias = "schema")]
+    pub template: String,
     pub name: String,
 }
 
@@ -71,10 +74,31 @@ tables:
 
         let manifest = load_library_manifest(tmp.path()).unwrap();
         assert_eq!(manifest.name, "My Components Library");
-        assert_eq!(manifest.schemas_path, "schemas");
-        assert_eq!(manifest.tables.len(), 2);
-        assert_eq!(manifest.tables[0].file, "data/resistors.csv");
-        assert_eq!(manifest.tables[0].schema, "resistor");
-        assert_eq!(manifest.tables[0].name, "Resistors");
+        assert_eq!(manifest.templates_path, "schemas");
+        assert_eq!(manifest.component_types.len(), 2);
+        assert_eq!(manifest.component_types[0].file, "data/resistors.csv");
+        assert_eq!(manifest.component_types[0].template, "resistor");
+        assert_eq!(manifest.component_types[0].name, "Resistors");
+    }
+
+    #[test]
+    fn test_load_library_manifest_old_keys() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("library.yaml"),
+            r#"name: "My Components Library"
+schemas_path: schemas
+tables:
+  - file: data/resistors.csv
+    schema: resistor
+    name: "Resistors"
+"#,
+        )
+        .unwrap();
+
+        let manifest = load_library_manifest(tmp.path()).unwrap();
+        assert_eq!(manifest.templates_path, "schemas");
+        assert_eq!(manifest.component_types.len(), 1);
+        assert_eq!(manifest.component_types[0].template, "resistor");
     }
 }

@@ -1,13 +1,13 @@
-// Table editor view — data grid with add/edit/delete
-const TableEditorView = {
+// Component type editor view — data grid with add/edit/delete
+const ComponentTypeEditorView = {
   async render(container, params) {
     const libPath = params.lib;
-    const tableName = params.table;
+    const componentTypeName = params.type;
     const projectPath = params.project;
 
-    if (!libPath || !tableName) { navigate('dashboard'); return; }
+    if (!libPath || !componentTypeName) { navigate('dashboard'); return; }
 
-    const data = await invoke('get_table_rows', { libPath, tableName });
+    const data = await invoke('get_component_type_data', { libPath, componentTypeName });
 
     container.innerHTML = '';
 
@@ -21,25 +21,25 @@ const TableEditorView = {
     container.appendChild(bc);
 
     const header = h('div', { className: 'page-header' },
-      h('h2', { className: 'page-title' }, `${data.name} (${data.rows.length} rows)`),
+      h('h2', { className: 'page-title' }, `${data.name} (${data.components.length} components)`),
       h('div', { className: 'btn-group' },
         h('button', { className: 'btn btn-primary', onClick: () => {
-          navigate('row-form', { lib: libPath, table: tableName, project: projectPath, mode: 'add' });
+          navigate('component-form', { lib: libPath, type: componentTypeName, project: projectPath, mode: 'add' });
         }}, 'Add Component'),
         h('button', { className: 'btn', onClick: () => {
-          navigate('schema-editor', { lib: libPath, schema: data.schema_name, project: projectPath });
-        }}, 'Edit Schema'),
+          navigate('template-editor', { lib: libPath, template: data.template_name, project: projectPath });
+        }}, 'Edit Template'),
       ),
     );
     container.appendChild(header);
 
-    if (data.rows.length === 0) {
+    if (data.components.length === 0) {
       container.appendChild(h('div', { className: 'empty' }, 'No components yet. Click Add Component to create one.'));
       return;
     }
 
     // Build table
-    const fields = data.schema.fields;
+    const fields = data.template.fields;
     const visibleKeys = ['id', ...fields.map(f => f.key).filter(k => k !== 'id')];
 
     const table = h('table', { className: 'data-table' });
@@ -58,23 +58,23 @@ const TableEditorView = {
     table.appendChild(thead);
 
     const tbody = h('tbody');
-    for (const row of data.rows) {
+    for (const comp of data.components) {
       const tr = h('tr', {},
-        ...visibleKeys.map(k => h('td', { title: row[k] || '' }, row[k] || '')),
-        h('td', { style: { textAlign: 'center' } }, row['exclude_from_bom'] === 'true' ? '\u2713' : ''),
-        h('td', { style: { textAlign: 'center' } }, row['exclude_from_board'] === 'true' ? '\u2713' : ''),
-        h('td', { style: { textAlign: 'center' } }, row['exclude_from_sim'] === 'true' ? '\u2713' : ''),
+        ...visibleKeys.map(k => h('td', { title: comp[k] || '' }, comp[k] || '')),
+        h('td', { style: { textAlign: 'center' } }, comp['exclude_from_bom'] === 'true' ? '\u2713' : ''),
+        h('td', { style: { textAlign: 'center' } }, comp['exclude_from_board'] === 'true' ? '\u2713' : ''),
+        h('td', { style: { textAlign: 'center' } }, comp['exclude_from_sim'] === 'true' ? '\u2713' : ''),
         h('td', {},
           h('button', { className: 'btn btn-sm', onClick: () => {
-            navigate('row-form', {
-              lib: libPath, table: tableName, project: projectPath,
-              mode: 'edit', id: row.id
+            navigate('component-form', {
+              lib: libPath, type: componentTypeName, project: projectPath,
+              mode: 'edit', id: comp.id
             });
           }}, 'Edit'),
           h('button', { className: 'btn btn-sm btn-danger', style: { marginLeft: '4px' }, onClick: async () => {
-            if (!confirm(`Delete row ${row.id}?`)) return;
+            if (!confirm(`Delete component ${comp.id}?`)) return;
             try {
-              await invoke('delete_row', { libPath: libPath, tableName, id: row.id });
+              await invoke('delete_component', { libPath: libPath, componentTypeName, id: comp.id });
               renderRoute();
             } catch (e) { alert('Error: ' + e); }
           }}, 'Del'),

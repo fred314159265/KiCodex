@@ -1,14 +1,22 @@
-use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::tray::TrayIcon;
-use tauri::{AppHandle, Manager, WebviewWindowBuilder, WebviewUrl};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindowBuilder, WebviewUrl};
 
+use crate::ActiveProject;
 use crate::AppState;
 
-/// Build the tray menu with current project list.
+/// Build the tray menu with current project list and optional validation summary.
 pub fn build_menu(
     app: &AppHandle,
-    project_names: &[String],
+    projects: &[ActiveProject],
+    validation: Option<(usize, usize)>,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let status_text = match validation {
+        Some((0, 0)) => "Status: All clear".to_string(),
+        Some((errors, warnings)) => format!("Status: {} error(s), {} warning(s)", errors, warnings),
+        None => "Status: Running".to_string(),
+    };
+
     let mut builder = MenuBuilder::new(app)
         .item(
             &MenuItemBuilder::with_id("title", "KiCodex")
@@ -16,7 +24,7 @@ pub fn build_menu(
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("status", "Status: Running")
+            &MenuItemBuilder::with_id("status", &status_text)
                 .enabled(false)
                 .build(app)?,
         )
@@ -25,36 +33,75 @@ pub fn build_menu(
 
     builder = builder.item(&PredefinedMenuItem::separator(app)?);
 
-    if project_names.is_empty() {
+    if projects.is_empty() {
         builder = builder.item(
             &MenuItemBuilder::with_id("no-projects", "No projects registered")
                 .enabled(false)
                 .build(app)?,
         );
     } else {
-        for (i, name) in project_names.iter().enumerate() {
-            builder =
-                builder.item(&MenuItemBuilder::with_id(format!("project-{i}"), name).build(app)?);
+        for (i, project) in projects.iter().enumerate() {
+            let dir_name = project
+                .project_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let label = format!("{} — {}", project.name, dir_name);
+
+            let submenu = SubmenuBuilder::with_id(app, format!("project-{i}"), &label)
+                .item(
+                    &MenuItemBuilder::with_id(format!("project-{i}-dashboard"), "Open in Dashboard")
+                        .build(app)?,
+                )
+                .item(
+                    &MenuItemBuilder::with_id(format!("project-{i}-validate"), "Validate")
+                        .build(app)?,
+                )
+                .item(
+                    &MenuItemBuilder::with_id(format!("project-{i}-folder"), "Open Folder")
+                        .build(app)?,
+                )
+                .build()?;
+
+            builder = builder.item(&submenu);
         }
     }
 
     builder = builder
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&MenuItemBuilder::with_id("open-config", "Open Config Directory").build(app)?)
+        .item(&MenuItemBuilder::with_id("open-config", "Open Settings Folder").build(app)?)
         .item(&PredefinedMenuItem::separator(app)?)
         .item(&MenuItemBuilder::with_id("quit", "Quit").build(app)?);
 
     builder.build()
 }
 
-/// Update the tray menu with the current project list.
-pub fn update_menu(app: &AppHandle, tray: &TrayIcon, project_names: &[String]) {
-    match build_menu(app, project_names) {
+/// Update the tray menu with the current project list and validation summary.
+pub fn update_menu(
+    app: &AppHandle,
+    tray: &TrayIcon,
+    projects: &[ActiveProject],
+    validation: Option<(usize, usize)>,
+) {
+    match build_menu(app, projects, validation) {
         Ok(menu) => {
             if let Err(e) = tray.set_menu(Some(menu)) {
                 tracing::error!("Failed to update tray menu: {}", e);
             }
-            let tooltip = format!("KiCodex — {} project(s) active", project_names.len());
+            let tooltip = match validation {
+                Some((0, 0)) => {
+                    format!("KiCodex — {} project(s) active", projects.len())
+                }
+                Some((errors, warnings)) => {
+                    format!(
+                        "KiCodex — {} project(s) active — {} error(s), {} warning(s)",
+                        projects.len(),
+                        errors,
+                        warnings,
+                    )
+                }
+                None => format!("KiCodex — {} project(s) active", projects.len()),
+            };
             let _ = tray.set_tooltip(Some(&tooltip));
         }
         Err(e) => {
@@ -64,7 +111,7 @@ pub fn update_menu(app: &AppHandle, tray: &TrayIcon, project_names: &[String]) {
 }
 
 /// Open or focus the dashboard window.
-fn open_dashboard(app: &AppHandle) {
+pub fn open_dashboard(app: &AppHandle) {
     // If window already exists, focus it
     if let Some(window) = app.get_webview_window("dashboard") {
         let _ = window.set_focus();
@@ -108,12 +155,61 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
             }
         }
         id if id.starts_with("project-") => {
-            if let Ok(idx) = id.strip_prefix("project-").unwrap().parse::<usize>() {
-                if let Some(state) = app.try_state::<AppState>() {
-                    let active = state.active_projects.lock().unwrap();
-                    if let Some(project) = active.get(idx) {
-                        if project.project_path.exists() {
-                            let _ = open::that(&project.project_path);
+            // Parse: project-{i}-{action}
+            let rest = id.strip_prefix("project-").unwrap();
+            let parts: Vec<&str> = rest.splitn(2, '-').collect();
+            let idx: usize = match parts[0].parse() {
+                Ok(i) => i,
+                Err(_) => return,
+            };
+
+            let action = parts.get(1).copied().unwrap_or("folder");
+
+            if let Some(state) = app.try_state::<AppState>() {
+                let active = state.active_projects.lock().unwrap();
+                if let Some(project) = active.get(idx) {
+                    match action {
+                        "dashboard" => {
+                            let path = project.project_path.to_string_lossy().to_string();
+                            drop(active);
+                            open_dashboard(app);
+                            let hash = format!(
+                                "project?path={}",
+                                urlencoding::encode(&path)
+                            );
+                            let _ = app.emit("navigate", hash);
+                        }
+                        "validate" => {
+                            let project_path =
+                                project.project_path.to_string_lossy().to_string();
+                            // Find first library for this project
+                            let persisted = state.persisted.lock().unwrap();
+                            let lib_path = persisted
+                                .projects
+                                .iter()
+                                .find(|p| p.project_path == project_path)
+                                .map(|p| p.library_path.clone());
+                            drop(persisted);
+                            drop(active);
+
+                            open_dashboard(app);
+                            if let Some(lib) = lib_path {
+                                let clean_lib = lib
+                                    .strip_prefix(r"\\?\")
+                                    .unwrap_or(&lib)
+                                    .to_string();
+                                let hash = format!(
+                                    "validate?lib={}&project={}",
+                                    urlencoding::encode(&clean_lib),
+                                    urlencoding::encode(&project_path),
+                                );
+                                let _ = app.emit("navigate", hash);
+                            }
+                        }
+                        _ => {
+                            if project.project_path.exists() {
+                                let _ = open::that(&project.project_path);
+                            }
                         }
                     }
                 }

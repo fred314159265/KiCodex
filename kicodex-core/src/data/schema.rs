@@ -17,7 +17,8 @@ pub enum SchemaError {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawSchema {
-    pub inherits: Option<String>,
+    #[serde(alias = "inherits")]
+    pub based_on: Option<String>,
     #[serde(default)]
     pub exclude_from_bom: bool,
     #[serde(default)]
@@ -84,7 +85,7 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
     let mut exclude_from_sim = raw.exclude_from_sim;
 
     // If this schema inherits from base, start with base values
-    if let Some(ref parent_name) = raw.inherits {
+    if let Some(ref parent_name) = raw.based_on {
         let parent = if parent_name == "_base" {
             let base =
                 base.ok_or_else(|| SchemaError::MissingBase(schemas_dir.display().to_string()))?;
@@ -134,6 +135,19 @@ pub fn write_schema(
     let yaml = serde_yml::to_string(schema)?;
     std::fs::write(&path, yaml)?;
     Ok(())
+}
+
+// Aliases for the template-based naming convention
+pub type RawTemplate = RawSchema;
+
+/// Alias for `load_schema`.
+pub fn load_template(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSchema, SchemaError> {
+    load_schema(schemas_dir, schema_name)
+}
+
+/// Alias for `write_schema`.
+pub fn write_template(schemas_dir: &Path, name: &str, schema: &RawSchema) -> Result<(), SchemaError> {
+    write_schema(schemas_dir, name, schema)
 }
 
 #[cfg(test)]
@@ -228,7 +242,27 @@ fields:
     }
 
     #[test]
-    fn test_missing_parent_schema() {
+    fn test_load_inherited_template_old_key() {
+        let tmp = TempDir::new().unwrap();
+        let templates_dir = tmp.path().join("templates");
+        fs::create_dir_all(&templates_dir).unwrap();
+        fs::write(
+            templates_dir.join("_base.yaml"),
+            "fields:\n  mpn:\n    display_name: MPN\n    required: true\n",
+        ).unwrap();
+        fs::write(
+            templates_dir.join("test.yaml"),
+            "inherits: _base\nfields:\n  extra:\n    display_name: Extra\n",
+        ).unwrap();
+
+        let template = load_template(&templates_dir, "test").unwrap();
+        assert_eq!(template.fields.len(), 2);
+        assert!(template.fields.contains_key("mpn"));
+        assert!(template.fields.contains_key("extra"));
+    }
+
+    #[test]
+    fn test_missing_parent_template() {
         let tmp = TempDir::new().unwrap();
         let schemas_dir = tmp.path().join("schemas");
         write_test_schemas(&schemas_dir);

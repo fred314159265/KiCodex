@@ -391,7 +391,7 @@ body {
 /* Schema editor field row */
 .schema-field-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 120px 60px 60px 40px;
+  grid-template-columns: 1fr 1fr 1fr 120px 60px 60px 40px;
   gap: 6px;
   align-items: center;
   margin-bottom: 6px;

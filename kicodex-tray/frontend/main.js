@@ -38,11 +38,11 @@ function navigate(view, params = {}) {
 const views = {
   dashboard: DashboardView,
   project: ProjectView,
-  'table-editor': TableEditorView,
-  'row-form': RowFormView,
+  'component-type-editor': ComponentTypeEditorView,
+  'component-form': ComponentFormView,
   validate: ValidateView,
   'add-project': AddProjectView,
-  'schema-editor': SchemaEditorView,
+  'template-editor': TemplateEditorView,
 };
 
 async function renderRoute() {
@@ -81,6 +81,9 @@ window.addEventListener('DOMContentLoaded', () => {
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event.listen('projects-changed', () => {
       renderRoute();
+    });
+    window.__TAURI__.event.listen('navigate', (event) => {
+      window.location.hash = event.payload;
     });
   }
 });

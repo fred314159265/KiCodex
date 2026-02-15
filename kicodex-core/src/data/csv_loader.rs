@@ -215,6 +215,19 @@ pub fn update_row(path: &Path, id: &str, fields: &CsvRow) -> Result<(), CsvError
     }
 }
 
+// Aliases for component-based naming convention
+pub fn append_component(path: &Path, fields: &CsvRow) -> Result<String, CsvError> {
+    append_row(path, fields)
+}
+
+pub fn update_component(path: &Path, id: &str, fields: &CsvRow) -> Result<(), CsvError> {
+    update_row(path, id, fields)
+}
+
+pub fn delete_component(path: &Path, id: &str) -> Result<(), CsvError> {
+    delete_row(path, id)
+}
+
 /// Delete a row by ID.
 pub fn delete_row(path: &Path, id: &str) -> Result<(), CsvError> {
     let mut rows = load_csv_with_ids(path)?;

@@ -64,7 +64,7 @@ impl PersistedRegistry {
     /// project_path or library_path to avoid stale duplicates.
     pub fn upsert(&mut self, entry: ProjectEntry) {
         self.projects.retain(|p| {
-            p.project_path != entry.project_path && p.library_path != entry.library_path
+            !(p.project_path == entry.project_path && p.library_path == entry.library_path)
         });
         self.projects.push(entry);
     }

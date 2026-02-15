@@ -6,7 +6,7 @@ pub struct ProjectInfo {
     pub project_path: String,
     pub library_path: String,
     pub active: bool,
-    pub table_count: usize,
+    pub component_type_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -14,27 +14,28 @@ pub struct LibraryInfo {
     pub name: String,
     pub path: String,
     pub description: Option<String>,
-    pub tables: Vec<TableInfo>,
+    pub component_types: Vec<ComponentTypeInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct TableInfo {
+pub struct ComponentTypeInfo {
     pub name: String,
-    pub schema_name: String,
-    pub row_count: usize,
+    pub template_name: String,
+    pub component_count: usize,
     pub file: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct TableData {
+pub struct ComponentTypeData {
     pub name: String,
-    pub schema: SchemaInfo,
-    pub rows: Vec<indexmap::IndexMap<String, String>>,
+    pub template_name: String,
+    pub template: TemplateInfo,
+    pub components: Vec<indexmap::IndexMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SchemaInfo {
-    pub inherits: Option<String>,
+pub struct TemplateInfo {
+    pub based_on: Option<String>,
     pub exclude_from_bom: bool,
     pub exclude_from_board: bool,
     pub exclude_from_sim: bool,
@@ -56,13 +57,13 @@ pub struct FieldInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct ValidationResult {
     pub library: String,
-    pub tables: Vec<ValidationTableResult>,
+    pub component_types: Vec<ValidationComponentTypeResult>,
     pub error_count: usize,
     pub warning_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ValidationTableResult {
+pub struct ValidationComponentTypeResult {
     pub name: String,
     pub file: String,
     pub errors: Vec<ValidationIssue>,
@@ -103,8 +104,8 @@ pub struct DiscoveredProject {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct RawSchemaInput {
-    pub inherits: Option<String>,
+pub struct RawTemplateInput {
+    pub based_on: Option<String>,
     #[serde(default)]
     pub exclude_from_bom: bool,
     #[serde(default)]

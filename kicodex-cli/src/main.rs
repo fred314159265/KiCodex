@@ -148,12 +148,12 @@ async fn run_serve(path: &std::path::Path, port: u16) -> anyhow::Result<()> {
             let lib_path = lib_path.canonicalize().unwrap_or(lib_path);
             let library = kicodex_core::server::load_library(&lib_path)?;
             tracing::info!(
-                "Loaded library '{}' with {} tables",
+                "Loaded library '{}' with {} component type(s)",
                 library.name,
-                library.tables.len()
+                library.component_types.len()
             );
-            for table in &library.tables {
-                tracing::info!("  {} ({} parts)", table.name, table.rows.len());
+            for ct in &library.component_types {
+                tracing::info!("  {} ({} parts)", ct.name, ct.components.len());
             }
             let token = uuid::Uuid::new_v4().to_string();
             registry.insert(&token, library);
@@ -294,8 +294,8 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
 
         let mut manifest = kicodex_core::data::library::load_library_manifest(&lib_dir)?;
 
-        // Check for duplicate table (compare against schema key, which is the lowercase table identifier)
-        if manifest.tables.iter().any(|t| t.schema == table_name) {
+        // Check for duplicate component type
+        if manifest.component_types.iter().any(|t| t.template == table_name) {
             anyhow::bail!(
                 "Table '{}' already exists in library '{}'",
                 table_name,
@@ -304,7 +304,7 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
         }
 
         // Create schema file
-        let schemas_dir = lib_dir.join(&manifest.schemas_path);
+        let schemas_dir = lib_dir.join(&manifest.templates_path);
         std::fs::create_dir_all(&schemas_dir)?;
         let schema_path = schemas_dir.join(format!("{}.yaml", table_name));
         std::fs::write(&schema_path, schema_template())?;
@@ -313,11 +313,11 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
         let csv_path = lib_dir.join(format!("{}.csv", table_name));
         std::fs::write(&csv_path, csv_template())?;
 
-        // Append table to manifest
-        manifest.tables.push(kicodex_core::data::library::TableDef {
+        // Append component type to manifest
+        manifest.component_types.push(kicodex_core::data::library::ComponentTypeDef {
             name: capitalize(table_name),
             file: format!("{}.csv", table_name),
-            schema: table_name.to_string(),
+            template: table_name.to_string(),
         });
 
         let yaml = serde_yml::to_string(&manifest)?;
@@ -333,8 +333,8 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
         let schemas_dir = lib_dir.join("schemas");
         std::fs::create_dir_all(&schemas_dir)?;
 
-        // Build tables list — only if --table was explicitly provided
-        let mut tables = Vec::new();
+        // Build component types list — only if --table was explicitly provided
+        let mut component_types = Vec::new();
         if let Some(table_name) = table {
             // Write schema
             let schema_path = schemas_dir.join(format!("{}.yaml", table_name));
@@ -344,10 +344,10 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
             let csv_path = lib_dir.join(format!("{}.csv", table_name));
             std::fs::write(&csv_path, csv_template())?;
 
-            tables.push(kicodex_core::data::library::TableDef {
+            component_types.push(kicodex_core::data::library::ComponentTypeDef {
                 name: capitalize(table_name),
                 file: format!("{}.csv", table_name),
-                schema: table_name.to_string(),
+                template: table_name.to_string(),
             });
 
             println!("Created library '{}' at {}/", name, lib_dir.display());
@@ -373,8 +373,8 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
         let manifest = kicodex_core::data::library::LibraryManifest {
             name: name.to_string(),
             description: Some(format!("KiCodex library: {}", name)),
-            schemas_path: "schemas".to_string(),
-            tables,
+            templates_path: "schemas".to_string(),
+            component_types,
         };
         let yaml = serde_yml::to_string(&manifest)?;
         std::fs::write(&manifest_path, yaml)?;
@@ -585,33 +585,33 @@ fn validate_library(
     let library = kicodex_core::server::load_library(library_root)?;
     let manifest = kicodex_core::data::library::load_library_manifest(library_root)?;
 
-    // Build a map from table name -> csv file path
-    let table_files: std::collections::HashMap<String, String> = manifest
-        .tables
+    // Build a map from component type name -> csv file path
+    let ct_files: std::collections::HashMap<String, String> = manifest
+        .component_types
         .iter()
         .map(|t| (t.name.clone(), t.file.clone()))
         .collect();
 
     let mut issues: Vec<ValidationIssue> = Vec::new();
 
-    for table in &library.tables {
-        let csv_file = table_files
-            .get(&table.name)
+    for ct in &library.component_types {
+        let csv_file = ct_files
+            .get(&ct.name)
             .cloned()
-            .unwrap_or_else(|| table.schema_name.clone());
+            .unwrap_or_else(|| ct.template_name.clone());
 
-        let csv_headers: HashSet<&String> = table
-            .rows
+        let csv_headers: HashSet<&String> = ct
+            .components
             .first()
             .map(|r| r.keys().collect())
             .unwrap_or_default();
 
         // Check 1: Required fields present as CSV columns
-        for (field_name, field_def) in &table.schema.fields {
+        for (field_name, field_def) in &ct.template.fields {
             if field_def.required && !csv_headers.contains(field_name) {
                 issues.push(ValidationIssue {
                     severity: Severity::Error,
-                    table: table.name.clone(),
+                    table: ct.name.clone(),
                     file: csv_file.clone(),
                     row: None,
                     id: None,
@@ -626,7 +626,7 @@ fn validate_library(
         // Check 2-6: Per-row checks
         let mut seen_ids: HashSet<String> = HashSet::new();
 
-        for (row_idx, row) in table.rows.iter().enumerate() {
+        for (row_idx, row) in ct.components.iter().enumerate() {
             let row_num = row_idx + 1; // 1-based
             let row_id = row.get("id").cloned().unwrap_or_default();
 
@@ -634,7 +634,7 @@ fn validate_library(
             if !row_id.is_empty() && !seen_ids.insert(row_id.clone()) {
                 issues.push(ValidationIssue {
                     severity: Severity::Error,
-                    table: table.name.clone(),
+                    table: ct.name.clone(),
                     file: csv_file.clone(),
                     row: Some(row_num),
                     id: Some(row_id.clone()),
@@ -642,7 +642,7 @@ fn validate_library(
                 });
             }
 
-            for (field_name, field_def) in &table.schema.fields {
+            for (field_name, field_def) in &ct.template.fields {
                 let value = row.get(field_name).map(|s| s.as_str()).unwrap_or("");
                 let field_type = field_def.field_type.as_deref();
 
@@ -651,7 +651,7 @@ fn validate_library(
                     if csv_headers.contains(field_name) {
                         issues.push(ValidationIssue {
                             severity: Severity::Error,
-                            table: table.name.clone(),
+                            table: ct.name.clone(),
                             file: csv_file.clone(),
                             row: Some(row_num),
                             id: Some(row_id.clone()),
@@ -669,7 +669,7 @@ fn validate_library(
                     if let Some(ft) = field_type {
                         issues.push(ValidationIssue {
                             severity: Severity::Warn,
-                            table: table.name.clone(),
+                            table: ct.name.clone(),
                             file: csv_file.clone(),
                             row: Some(row_num),
                             id: Some(row_id.clone()),
@@ -693,7 +693,7 @@ fn validate_library(
                         };
                         issues.push(ValidationIssue {
                             severity: sev,
-                            table: table.name.clone(),
+                            table: ct.name.clone(),
                             file: csv_file.clone(),
                             row: Some(row_num),
                             id: Some(row_id.clone()),
@@ -722,7 +722,7 @@ fn validate_library(
                             LibLookup::LibraryNotFound(lib) => {
                                 issues.push(ValidationIssue {
                                     severity: Severity::Warn,
-                                    table: table.name.clone(),
+                                    table: ct.name.clone(),
                                     file: csv_file.clone(),
                                     row: Some(row_num),
                                     id: Some(row_id.clone()),
@@ -735,7 +735,7 @@ fn validate_library(
                             LibLookup::EntryNotFound(lib, entry) => {
                                 issues.push(ValidationIssue {
                                     severity: Severity::Warn,
-                                    table: table.name.clone(),
+                                    table: ct.name.clone(),
                                     file: csv_file.clone(),
                                     row: Some(row_num),
                                     id: Some(row_id.clone()),
@@ -769,7 +769,7 @@ fn validate_library(
                     };
                     issues.push(ValidationIssue {
                         severity: sev,
-                        table: table.name.clone(),
+                        table: ct.name.clone(),
                         file: csv_file.clone(),
                         row: Some(row_num),
                         id: Some(row_id.clone()),
@@ -793,26 +793,26 @@ fn validate_library(
         .count();
 
     if json_output {
-        let tables_json: Vec<serde_json::Value> = library
-            .tables
+        let ct_json: Vec<serde_json::Value> = library
+            .component_types
             .iter()
-            .map(|table| {
-                let csv_file = table_files
-                    .get(&table.name)
+            .map(|ct| {
+                let csv_file = ct_files
+                    .get(&ct.name)
                     .cloned()
-                    .unwrap_or_else(|| table.schema_name.clone());
+                    .unwrap_or_else(|| ct.template_name.clone());
                 let errors: Vec<_> = issues
                     .iter()
-                    .filter(|i| i.table == table.name && i.severity == Severity::Error)
+                    .filter(|i| i.table == ct.name && i.severity == Severity::Error)
                     .map(issue_to_json)
                     .collect();
                 let warnings: Vec<_> = issues
                     .iter()
-                    .filter(|i| i.table == table.name && i.severity == Severity::Warn)
+                    .filter(|i| i.table == ct.name && i.severity == Severity::Warn)
                     .map(issue_to_json)
                     .collect();
                 json!({
-                    "name": table.name,
+                    "name": ct.name,
                     "file": csv_file,
                     "errors": errors,
                     "warnings": warnings,
@@ -822,7 +822,7 @@ fn validate_library(
 
         let output = json!({
             "library": library.name,
-            "tables": tables_json,
+            "component_types": ct_json,
             "error_count": error_count,
             "warning_count": warning_count,
         });
@@ -832,7 +832,7 @@ fn validate_library(
         println!("Validating library '{}'...\n", library.name);
 
         if issues.is_empty() {
-            println!("No issues found across {} table(s).", library.tables.len());
+            println!("No issues found across {} table(s).", library.component_types.len());
         } else {
             let mut current_table = String::new();
             for issue in &issues {
@@ -866,7 +866,7 @@ fn validate_library(
                 "\nSummary: {} error(s), {} warning(s) across {} table(s)",
                 error_count,
                 warning_count,
-                library.tables.len()
+                library.component_types.len()
             );
         }
     }

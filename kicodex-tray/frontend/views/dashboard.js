@@ -38,7 +38,23 @@ const DashboardView = {
         const group = grouped[projPath];
         const libs = group.libraries;
         const projName = projPath.split(/[\\/]/).pop() || projPath;
-        const totalTables = libs.reduce((sum, l) => sum + l.table_count, 0);
+        const totalTypes = libs.reduce((sum, l) => sum + l.component_type_count, 0);
+
+        const removeBtn = h('button', {
+          className: 'btn-icon',
+          title: 'Remove project',
+          onClick: async (e) => {
+            e.stopPropagation();
+            const yes = await window.__TAURI__.dialog.confirm('Remove this project from KiCodex?', { title: 'Remove Project', kind: 'warning' });
+            if (!yes) return;
+            try {
+              await invoke('remove_project', { projectPath: projPath });
+              renderRoute();
+            } catch (err) {
+              alert('Error: ' + err);
+            }
+          }
+        }, '\u00d7');
 
         const card = h('div', { className: 'card', style: { cursor: 'pointer' } },
           h('div', { className: 'card-header' },
@@ -46,10 +62,11 @@ const DashboardView = {
               h('span', { className: `dot ${group.active ? 'dot-active' : 'dot-inactive'}` }),
               projName
             ),
+            removeBtn,
           ),
           h('div', { className: 'card-subtitle' }, projPath),
           h('div', { style: { marginTop: '8px', fontSize: '13px', color: 'var(--text-muted)' } },
-            `${libs.length} ${libs.length !== 1 ? 'libraries' : 'library'}, ${totalTables} table${totalTables !== 1 ? 's' : ''}`
+            `${libs.length} ${libs.length !== 1 ? 'libraries' : 'library'}, ${totalTypes} component type${totalTypes !== 1 ? 's' : ''}`
           ),
         );
         card.addEventListener('click', () => {
@@ -157,7 +174,29 @@ async function promptNewLibrary() {
       try {
         createBtn.disabled = true;
         createBtn.textContent = 'Creating...';
-        await invoke('create_library', { name, parentDir: dirPath });
+        const libPath = await invoke('create_library', { name, parentDir: dirPath });
+
+        // Auto-register if the library is inside a registered project
+        try {
+          const projects = await invoke('get_projects');
+          const normalizedLibPath = libPath.replace(/\\/g, '/');
+          const matchingProject = projects.find(p => {
+            const normalizedProjPath = p.project_path.replace(/\\/g, '/');
+            return normalizedLibPath.startsWith(normalizedProjPath + '/');
+          });
+          if (matchingProject) {
+            const projPath = matchingProject.project_path;
+            const normalizedProjPath = projPath.replace(/\\/g, '/');
+            const relPath = normalizedLibPath.slice(normalizedProjPath.length + 1);
+            await invoke('add_project', {
+              projectPath: projPath,
+              libraries: [{ name, path: relPath, is_new: true }],
+            });
+          }
+        } catch (regErr) {
+          console.error('Auto-register failed:', regErr);
+        }
+
         overlay.remove();
         renderRoute();
       } catch (e) {
