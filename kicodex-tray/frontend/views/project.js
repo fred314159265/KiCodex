@@ -1,4 +1,4 @@
-// Project view — library detail with component types
+// Project view — library detail with part tables
 const ProjectView = {
   async render(container, params) {
     const projectPath = params.path;
@@ -21,6 +21,7 @@ const ProjectView = {
       h('div', { className: 'btn-group' },
         h('button', { className: 'btn', onClick: () => invoke('open_in_explorer', { path: projectPath }) }, 'Open Folder'),
         h('button', { className: 'btn', onClick: () => doScanForLibraries(projectPath) }, 'Scan for Libraries'),
+        h('button', { className: 'btn btn-primary', onClick: () => doNewLibrary(projectPath) }, 'New Library'),
         h('button', { className: 'btn btn-danger', onClick: () => doRemoveProject(projectPath) }, 'Remove Project'),
       ),
     );
@@ -41,18 +42,18 @@ const ProjectView = {
         ),
         h('div', { className: 'btn-group' },
           h('button', { className: 'btn', onClick: () => doValidate(lib, projectPath) }, 'Validate'),
-          h('button', { className: 'btn', onClick: () => doAddComponentType(lib, projectPath) }, 'Add Component Type'),
+          h('button', { className: 'btn', onClick: () => doAddPartTable(lib, projectPath) }, 'Add Part Table'),
         ),
       );
       section.appendChild(header);
 
-      if (lib.component_types.length === 0) {
-        section.appendChild(h('div', { className: 'empty' }, 'No component types in this library.'));
+      if (lib.part_tables.length === 0) {
+        section.appendChild(h('div', { className: 'empty' }, 'No part tables in this library.'));
       } else {
         const table = h('table', { className: 'data-table' });
         const thead = h('thead', {},
           h('tr', {},
-            h('th', {}, 'Component Type'),
+            h('th', {}, 'Part Table'),
             h('th', {}, 'Template'),
             h('th', {}, 'Components'),
             h('th', {}, 'Actions'),
@@ -60,11 +61,11 @@ const ProjectView = {
         );
         table.appendChild(thead);
         const tbody = h('tbody');
-        for (const ct of lib.component_types) {
+        for (const ct of lib.part_tables) {
           const tr = h('tr', {},
             h('td', {},
               h('a', {
-                href: `#component-type-editor?lib=${encodeURIComponent(lib.path)}&type=${encodeURIComponent(ct.name)}&project=${encodeURIComponent(projectPath)}`,
+                href: `#part-table-editor?lib=${encodeURIComponent(lib.path)}&type=${encodeURIComponent(ct.name)}&project=${encodeURIComponent(projectPath)}`,
                 style: { color: 'var(--accent)', textDecoration: 'none' }
               }, ct.name),
             ),
@@ -99,19 +100,116 @@ async function doRemoveProject(projectPath) {
   }
 }
 
+async function doNewLibrary(projectPath) {
+  const overlay = h('div', { className: 'modal-overlay' });
+  const modal = h('div', { className: 'modal', style: { width: '400px' } });
+
+  const nameInput = h('input', {
+    className: 'form-input',
+    type: 'text',
+    placeholder: 'e.g. my-components',
+    autofocus: true,
+  });
+
+  const errorDiv = h('div', { style: { color: 'var(--danger)', fontSize: '12px', minHeight: '16px' } });
+
+  const createBtn = h('button', {
+    className: 'btn btn-primary',
+    onClick: async () => {
+      const name = nameInput.value.trim();
+      if (!name) { errorDiv.textContent = 'Name is required'; return; }
+      try {
+        createBtn.disabled = true;
+        createBtn.textContent = 'Creating...';
+        await invoke('create_library', { name, parentDir: projectPath });
+        await invoke('add_project', {
+          projectPath,
+          libraries: [{ name, path: name, is_new: true }],
+        });
+        overlay.remove();
+        renderRoute();
+      } catch (e) {
+        errorDiv.textContent = String(e);
+        createBtn.disabled = false;
+        createBtn.textContent = 'Create';
+      }
+    },
+  }, 'Create');
+
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') createBtn.click();
+  });
+
+  modal.appendChild(h('div', { className: 'modal-header' },
+    h('h3', {}, 'New Library'),
+    h('button', { className: 'modal-close', onClick: () => overlay.remove() }, '\u00d7'),
+  ));
+  modal.appendChild(h('div', { style: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
+    h('div', { className: 'form-group' },
+      h('label', { className: 'form-label' }, 'Library Name'),
+      nameInput,
+      errorDiv,
+    ),
+    h('div', { style: { fontSize: '13px', color: 'var(--text-muted)' } },
+      'Will be created in: ' + projectPath,
+    ),
+    h('div', { className: 'btn-group' }, createBtn),
+  ));
+
+  overlay.appendChild(modal);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  nameInput.focus();
+}
+
 async function doValidate(lib, projectPath) {
   navigate('validate', { project: projectPath });
 }
 
-async function doAddComponentType(lib, projectPath) {
-  const name = prompt('Component type name (lowercase, e.g. "capacitors"):');
-  if (!name) return;
-  try {
-    await invoke('add_component_type', { libPath: lib.path, componentTypeName: name });
-    renderRoute();
-  } catch (e) {
-    alert('Error: ' + e);
-  }
+async function doAddPartTable(lib, projectPath) {
+  const overlay = h('div', { className: 'modal-overlay' });
+  const modal = h('div', { className: 'modal', style: { width: '400px' } });
+
+  const nameInput = h('input', {
+    className: 'form-input',
+    type: 'text',
+    placeholder: 'e.g. capacitors',
+    autofocus: true,
+  });
+
+  const errorDiv = h('div', { style: { color: 'var(--danger)', fontSize: '12px', minHeight: '16px' } });
+
+  const createBtn = h('button', {
+    className: 'btn btn-primary',
+    onClick: () => {
+      const name = nameInput.value.trim();
+      if (!name) { errorDiv.textContent = 'Name is required'; return; }
+      overlay.remove();
+      navigate('template-editor', { lib: lib.path, template: name, project: projectPath, mode: 'create' });
+    },
+  }, 'Next');
+
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') createBtn.click();
+  });
+
+  modal.appendChild(h('div', { className: 'modal-header' },
+    h('h3', {}, 'New Part Table'),
+    h('button', { className: 'modal-close', onClick: () => overlay.remove() }, '\u00d7'),
+  ));
+  modal.appendChild(h('div', { style: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
+    h('div', { className: 'form-group' },
+      h('label', { className: 'form-label' }, 'Part Table Name'),
+      nameInput,
+      errorDiv,
+    ),
+    h('div', { className: 'btn-group' }, createBtn),
+  ));
+
+  overlay.appendChild(modal);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  nameInput.focus();
 }
 
 async function doScanForLibraries(projectPath) {
