@@ -55,7 +55,7 @@ enum Commands {
         port: u16,
     },
 
-    /// Scaffold a new library or add a component type to an existing library
+    /// Scaffold a new library or add a part table to an existing library
     New {
         /// Name for the library
         name: String,
@@ -64,9 +64,9 @@ enum Commands {
         #[arg(long, default_value = ".")]
         path: PathBuf,
 
-        /// Name for the component type (defaults to library name for new libraries)
-        #[arg(long, alias = "table")]
-        component_type: Option<String>,
+        /// Name for the part table (defaults to library name for new libraries)
+        #[arg(long, alias = "table", alias = "component-type")]
+        part_table: Option<String>,
     },
 
     /// Scan for libraries and generate/update kicodex.yaml
@@ -144,9 +144,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::New {
             name,
             path,
-            component_type,
+            part_table,
         } => {
-            run_new(&name, &path, component_type.as_deref())?;
+            run_new(&name, &path, part_table.as_deref())?;
         }
         Commands::Scan { path } => {
             run_scan(&path)?;
@@ -188,11 +188,11 @@ async fn run_serve(path: &std::path::Path, port: u16, host: &str) -> anyhow::Res
             let lib_path = lib_path.canonicalize().unwrap_or(lib_path);
             let library = kicodex_core::server::load_library(&lib_path)?;
             tracing::info!(
-                "Loaded library '{}' with {} component type(s)",
+                "Loaded library '{}' with {} part table(s)",
                 library.name,
-                library.component_types.len()
+                library.part_tables.len()
             );
-            for ct in &library.component_types {
+            for ct in &library.part_tables {
                 tracing::info!("  {} ({} parts)", ct.name, ct.components.len());
             }
             let token = uuid::Uuid::new_v4().to_string();
@@ -318,30 +318,30 @@ fn run_init(project_dir: &std::path::Path, port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Scaffold a new library or add a component type to an existing library.
+/// Scaffold a new library or add a part table to an existing library.
 fn run_new(
     name: &str,
     parent_dir: &std::path::Path,
-    component_type: Option<&str>,
+    part_table: Option<&str>,
 ) -> anyhow::Result<()> {
     let lib_dir = parent_dir.join(name);
     let manifest_path = lib_dir.join("library.yaml");
 
     if manifest_path.exists() {
-        // Scenario B: library exists, add a new component type
-        let ct_name = component_type.ok_or_else(|| {
+        // Scenario B: library exists, add a new part table
+        let ct_name = part_table.ok_or_else(|| {
             anyhow::anyhow!(
-                "Library '{}' already exists. Use --component-type <name> to add a new component type.",
+                "Library '{}' already exists. Use --part-table <name> to add a new part table.",
                 name
             )
         })?;
 
         let mut manifest = kicodex_core::data::library::load_library_manifest(&lib_dir)?;
 
-        // Check for duplicate component type
-        if manifest.component_types.iter().any(|t| t.template == ct_name) {
+        // Check for duplicate part table
+        if manifest.part_tables.iter().any(|t| t.template == ct_name) {
             anyhow::bail!(
-                "Component type '{}' already exists in library '{}'",
+                "Part table '{}' already exists in library '{}'",
                 ct_name,
                 name
             );
@@ -357,10 +357,10 @@ fn run_new(
         let csv_path = lib_dir.join(format!("{}.csv", ct_name));
         std::fs::write(&csv_path, csv_template())?;
 
-        // Append component type to manifest
+        // Append part table to manifest
         manifest
-            .component_types
-            .push(kicodex_core::data::library::ComponentTypeDef {
+            .part_tables
+            .push(kicodex_core::data::library::PartTableDef {
                 name: capitalize(ct_name),
                 file: format!("{}.csv", ct_name),
                 template: ct_name.to_string(),
@@ -370,7 +370,7 @@ fn run_new(
         std::fs::write(&manifest_path, yaml)?;
 
         println!(
-            "Added component type '{}' to library '{}':",
+            "Added part table '{}' to library '{}':",
             ct_name, name
         );
         println!(
@@ -385,9 +385,9 @@ fn run_new(
         let templates_dir = lib_dir.join("templates");
         std::fs::create_dir_all(&templates_dir)?;
 
-        // Build component types list — only if --component-type was explicitly provided
-        let mut component_types = Vec::new();
-        if let Some(ct_name) = component_type {
+        // Build part tables list — only if --part-table was explicitly provided
+        let mut part_tables = Vec::new();
+        if let Some(ct_name) = part_table {
             // Write template
             let template_path = templates_dir.join(format!("{}.yaml", ct_name));
             std::fs::write(&template_path, schema_template())?;
@@ -396,7 +396,7 @@ fn run_new(
             let csv_path = lib_dir.join(format!("{}.csv", ct_name));
             std::fs::write(&csv_path, csv_template())?;
 
-            component_types.push(kicodex_core::data::library::ComponentTypeDef {
+            part_tables.push(kicodex_core::data::library::PartTableDef {
                 name: capitalize(ct_name),
                 file: format!("{}.csv", ct_name),
                 template: ct_name.to_string(),
@@ -415,7 +415,7 @@ fn run_new(
             println!("  - library.yaml");
             println!("  - templates/");
             println!(
-                "Add component types with: kicodex new {} --component-type <name>",
+                "Add part tables with: kicodex new {} --part-table <name>",
                 name,
             );
         }
@@ -425,7 +425,7 @@ fn run_new(
             name: name.to_string(),
             description: Some(format!("KiCodex library: {}", name)),
             templates_path: "templates".to_string(),
-            component_types,
+            part_tables,
         };
         let yaml = serde_yml::to_string(&manifest)?;
         std::fs::write(&manifest_path, yaml)?;
@@ -529,7 +529,7 @@ enum Severity {
 
 struct ValidationIssue {
     severity: Severity,
-    component_type: String,
+    part_table: String,
     file: String,
     row: Option<usize>,
     id: Option<String>,
@@ -636,16 +636,16 @@ fn validate_library(
     let library = kicodex_core::server::load_library(library_root)?;
     let manifest = kicodex_core::data::library::load_library_manifest(library_root)?;
 
-    // Build a map from component type name -> csv file path
+    // Build a map from part table name -> csv file path
     let ct_files: std::collections::HashMap<String, String> = manifest
-        .component_types
+        .part_tables
         .iter()
         .map(|t| (t.name.clone(), t.file.clone()))
         .collect();
 
     let mut issues: Vec<ValidationIssue> = Vec::new();
 
-    for ct in &library.component_types {
+    for ct in &library.part_tables {
         let csv_file = ct_files
             .get(&ct.name)
             .cloned()
@@ -662,7 +662,7 @@ fn validate_library(
             if field_def.required && !csv_headers.contains(field_name) {
                 issues.push(ValidationIssue {
                     severity: Severity::Error,
-                    component_type: ct.name.clone(),
+                    part_table: ct.name.clone(),
                     file: csv_file.clone(),
                     row: None,
                     id: None,
@@ -685,7 +685,7 @@ fn validate_library(
             if !row_id.is_empty() && !seen_ids.insert(row_id.clone()) {
                 issues.push(ValidationIssue {
                     severity: Severity::Error,
-                    component_type: ct.name.clone(),
+                    part_table: ct.name.clone(),
                     file: csv_file.clone(),
                     row: Some(row_num),
                     id: Some(row_id.clone()),
@@ -702,7 +702,7 @@ fn validate_library(
                     if csv_headers.contains(field_name) {
                         issues.push(ValidationIssue {
                             severity: Severity::Error,
-                            component_type: ct.name.clone(),
+                            part_table: ct.name.clone(),
                             file: csv_file.clone(),
                             row: Some(row_num),
                             id: Some(row_id.clone()),
@@ -720,7 +720,7 @@ fn validate_library(
                     if let Some(ft) = field_type {
                         issues.push(ValidationIssue {
                             severity: Severity::Warn,
-                            component_type: ct.name.clone(),
+                            part_table: ct.name.clone(),
                             file: csv_file.clone(),
                             row: Some(row_num),
                             id: Some(row_id.clone()),
@@ -744,7 +744,7 @@ fn validate_library(
                         };
                         issues.push(ValidationIssue {
                             severity: sev,
-                            component_type: ct.name.clone(),
+                            part_table: ct.name.clone(),
                             file: csv_file.clone(),
                             row: Some(row_num),
                             id: Some(row_id.clone()),
@@ -773,7 +773,7 @@ fn validate_library(
                             LibLookup::LibraryNotFound(lib) => {
                                 issues.push(ValidationIssue {
                                     severity: Severity::Warn,
-                                    component_type: ct.name.clone(),
+                                    part_table: ct.name.clone(),
                                     file: csv_file.clone(),
                                     row: Some(row_num),
                                     id: Some(row_id.clone()),
@@ -786,7 +786,7 @@ fn validate_library(
                             LibLookup::EntryNotFound(lib, entry) => {
                                 issues.push(ValidationIssue {
                                     severity: Severity::Warn,
-                                    component_type: ct.name.clone(),
+                                    part_table: ct.name.clone(),
                                     file: csv_file.clone(),
                                     row: Some(row_num),
                                     id: Some(row_id.clone()),
@@ -820,7 +820,7 @@ fn validate_library(
                     };
                     issues.push(ValidationIssue {
                         severity: sev,
-                        component_type: ct.name.clone(),
+                        part_table: ct.name.clone(),
                         file: csv_file.clone(),
                         row: Some(row_num),
                         id: Some(row_id.clone()),
@@ -845,7 +845,7 @@ fn validate_library(
 
     if json_output {
         let ct_json: Vec<serde_json::Value> = library
-            .component_types
+            .part_tables
             .iter()
             .map(|ct| {
                 let csv_file = ct_files
@@ -854,12 +854,12 @@ fn validate_library(
                     .unwrap_or_else(|| ct.template_name.clone());
                 let errors: Vec<_> = issues
                     .iter()
-                    .filter(|i| i.component_type == ct.name && i.severity == Severity::Error)
+                    .filter(|i| i.part_table == ct.name && i.severity == Severity::Error)
                     .map(issue_to_json)
                     .collect();
                 let warnings: Vec<_> = issues
                     .iter()
-                    .filter(|i| i.component_type == ct.name && i.severity == Severity::Warn)
+                    .filter(|i| i.part_table == ct.name && i.severity == Severity::Warn)
                     .map(issue_to_json)
                     .collect();
                 json!({
@@ -873,7 +873,7 @@ fn validate_library(
 
         let output = json!({
             "library": library.name,
-            "component_types": ct_json,
+            "part_tables": ct_json,
             "error_count": error_count,
             "warning_count": warning_count,
         });
@@ -884,17 +884,17 @@ fn validate_library(
 
         if issues.is_empty() {
             println!(
-                "No issues found across {} component type(s).",
-                library.component_types.len()
+                "No issues found across {} part table(s).",
+                library.part_tables.len()
             );
         } else {
-            let mut current_component_type = String::new();
+            let mut current_part_table = String::new();
             for issue in &issues {
-                if issue.component_type != current_component_type {
-                    current_component_type = issue.component_type.clone();
+                if issue.part_table != current_part_table {
+                    current_part_table = issue.part_table.clone();
                     println!(
-                        "Component type '{}' ({}):",
-                        current_component_type, issue.file
+                        "Part table '{}' ({}):",
+                        current_part_table, issue.file
                     );
                 }
 
@@ -920,10 +920,10 @@ fn validate_library(
             }
 
             println!(
-                "\nSummary: {} error(s), {} warning(s) across {} component type(s)",
+                "\nSummary: {} error(s), {} warning(s) across {} part table(s)",
                 error_count,
                 warning_count,
-                library.component_types.len()
+                library.part_tables.len()
             );
         }
     }
@@ -976,11 +976,11 @@ fn run_list() -> anyhow::Result<()> {
             } else {
                 entry.token.clone()
             };
-            // Count component types by loading the library
+            // Count part tables by loading the library
             let ct_count = match kicodex_core::server::load_library(std::path::Path::new(
                 &entry.library_path,
             )) {
-                Ok(lib) => format!("{} component type(s)", lib.component_types.len()),
+                Ok(lib) => format!("{} part table(s)", lib.part_tables.len()),
                 Err(_) => "unable to load".to_string(),
             };
             println!(

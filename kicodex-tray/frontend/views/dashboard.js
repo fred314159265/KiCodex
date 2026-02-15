@@ -38,7 +38,7 @@ const DashboardView = {
         const group = grouped[projPath];
         const libs = group.libraries;
         const projName = projPath.split(/[\\/]/).pop() || projPath;
-        const totalTypes = libs.reduce((sum, l) => sum + l.component_type_count, 0);
+        const totalTypes = libs.reduce((sum, l) => sum + l.part_table_count, 0);
 
         const removeBtn = h('button', {
           className: 'btn-icon',
@@ -66,7 +66,7 @@ const DashboardView = {
           ),
           h('div', { className: 'card-subtitle' }, projPath),
           h('div', { style: { marginTop: '8px', fontSize: '13px', color: 'var(--text-muted)' } },
-            `${libs.length} ${libs.length !== 1 ? 'libraries' : 'library'}, ${totalTypes} component type${totalTypes !== 1 ? 's' : ''}`
+            `${libs.length} ${libs.length !== 1 ? 'libraries' : 'library'}, ${totalTypes} part table${totalTypes !== 1 ? 's' : ''}`
           ),
         );
         card.addEventListener('click', () => {

@@ -38,7 +38,7 @@ function navigate(view, params = {}) {
 const views = {
   dashboard: DashboardView,
   project: ProjectView,
-  'component-type-editor': ComponentTypeEditorView,
+  'part-table-editor': PartTableEditorView,
   'component-form': ComponentFormView,
   validate: ValidateView,
   'add-project': AddProjectView,

@@ -8,7 +8,7 @@ pub async fn get_categories(
     Extension(AuthenticatedLibrary(library)): Extension<AuthenticatedLibrary>,
 ) -> Json<Vec<Category>> {
     let categories: Vec<Category> = library
-        .component_types
+        .part_tables
         .iter()
         .enumerate()
         .map(|(i, ct)| Category {

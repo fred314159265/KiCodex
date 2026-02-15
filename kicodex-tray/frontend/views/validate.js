@@ -56,12 +56,12 @@ const ValidateView = {
         }
       }
       summary.appendChild(h('span', { style: { color: 'var(--text-muted)' } },
-        `across ${result.component_types.length} component type${result.component_types.length !== 1 ? 's' : ''}`
+        `across ${result.part_tables.length} part table${result.part_tables.length !== 1 ? 's' : ''}`
       ));
       container.appendChild(summary);
 
       // Per-component-type results
-      for (const table of result.component_types) {
+      for (const table of result.part_tables) {
         const issues = [...table.errors, ...table.warnings];
         if (issues.length === 0) continue;
 

@@ -9,7 +9,7 @@ const ComponentFormView = {
 
     if (!libPath || !componentTypeName) { navigate('dashboard'); return; }
 
-    const data = await invoke('get_component_type_data', { libPath, componentTypeName });
+    const data = await invoke('get_part_table_data', { libPath, componentTypeName });
     const fields = data.template.fields;
     let existingComp = null;
     if (mode === 'edit' && editId) {
@@ -25,7 +25,7 @@ const ComponentFormView = {
     const bc = h('div', { className: 'breadcrumb' },
       h('a', { href: '#dashboard' }, 'Dashboard'),
       h('span', {}, ' / '),
-      h('a', { href: `#component-type-editor?lib=${encodeURIComponent(libPath)}&type=${encodeURIComponent(componentTypeName)}&project=${encodeURIComponent(projectPath)}` }, data.name),
+      h('a', { href: `#part-table-editor?lib=${encodeURIComponent(libPath)}&type=${encodeURIComponent(componentTypeName)}&project=${encodeURIComponent(projectPath)}` }, data.name),
       h('span', {}, ' / '),
       h('span', {}, mode === 'edit' ? `Edit #${editId}` : 'Add Component'),
     );
@@ -110,7 +110,7 @@ const ComponentFormView = {
     const btnGroup = h('div', { className: 'btn-group', style: { marginTop: '16px' } },
       h('button', { type: 'submit', className: 'btn btn-primary' }, mode === 'edit' ? 'Save' : 'Add'),
       h('button', { type: 'button', className: 'btn', onClick: () => {
-        navigate('component-type-editor', { lib: libPath, type: componentTypeName, project: projectPath });
+        navigate('part-table-editor', { lib: libPath, type: componentTypeName, project: projectPath });
       }}, 'Cancel'),
     );
     form.appendChild(btnGroup);
@@ -130,7 +130,7 @@ const ComponentFormView = {
         } else {
           await invoke('add_component', { libPath, componentTypeName, fields: fieldValues });
         }
-        navigate('component-type-editor', { lib: libPath, type: componentTypeName, project: projectPath });
+        navigate('part-table-editor', { lib: libPath, type: componentTypeName, project: projectPath });
       } catch (err) {
         alert('Error: ' + err);
       }

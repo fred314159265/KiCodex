@@ -6,7 +6,7 @@ pub struct ProjectInfo {
     pub project_path: String,
     pub library_path: String,
     pub active: bool,
-    pub component_type_count: usize,
+    pub part_table_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -14,11 +14,11 @@ pub struct LibraryInfo {
     pub name: String,
     pub path: String,
     pub description: Option<String>,
-    pub component_types: Vec<ComponentTypeInfo>,
+    pub part_tables: Vec<PartTableInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ComponentTypeInfo {
+pub struct PartTableInfo {
     pub name: String,
     pub template_name: String,
     pub component_count: usize,
@@ -26,7 +26,7 @@ pub struct ComponentTypeInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ComponentTypeData {
+pub struct PartTableData {
     pub name: String,
     pub template_name: String,
     pub template: TemplateInfo,
@@ -57,13 +57,13 @@ pub struct FieldInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct ValidationResult {
     pub library: String,
-    pub component_types: Vec<ValidationComponentTypeResult>,
+    pub part_tables: Vec<ValidationPartTableResult>,
     pub error_count: usize,
     pub warning_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ValidationComponentTypeResult {
+pub struct ValidationPartTableResult {
     pub name: String,
     pub file: String,
     pub errors: Vec<ValidationIssue>,

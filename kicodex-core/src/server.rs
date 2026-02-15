@@ -24,9 +24,9 @@ pub enum ServerError {
     Io(#[from] std::io::Error),
 }
 
-/// A loaded component type with its data and metadata.
+/// A loaded part table with its data and metadata.
 #[derive(Debug, Clone)]
-pub struct LoadedComponentType {
+pub struct LoadedPartTable {
     pub name: String,
     pub template_name: String,
     pub components: Vec<CsvRow>,
@@ -38,7 +38,7 @@ pub struct LoadedComponentType {
 pub struct LoadedLibrary {
     pub name: String,
     pub description: Option<String>,
-    pub component_types: Vec<LoadedComponentType>,
+    pub part_tables: Vec<LoadedPartTable>,
 }
 
 /// Load a library from disk into memory.
@@ -46,13 +46,13 @@ pub fn load_library(library_root: &Path) -> Result<LoadedLibrary, ServerError> {
     let manifest: LibraryManifest = library::load_library_manifest(library_root)?;
     let schemas_dir = library_root.join(&manifest.templates_path);
 
-    let mut component_types = Vec::new();
-    for ct_def in &manifest.component_types {
+    let mut part_tables = Vec::new();
+    for ct_def in &manifest.part_tables {
         let resolved = schema::load_schema(&schemas_dir, &ct_def.template)?;
         let csv_path = library_root.join(&ct_def.file);
         let components = csv_loader::load_csv_with_ids(&csv_path)?;
 
-        component_types.push(LoadedComponentType {
+        part_tables.push(LoadedPartTable {
             name: ct_def.name.clone(),
             template_name: ct_def.template.clone(),
             components,
@@ -63,7 +63,7 @@ pub fn load_library(library_root: &Path) -> Result<LoadedLibrary, ServerError> {
     Ok(LoadedLibrary {
         name: manifest.name,
         description: manifest.description,
-        component_types,
+        part_tables,
     })
 }
 
@@ -95,11 +95,11 @@ pub fn build_router(registry: Arc<ProjectRegistry>) -> Router {
 pub async fn run_server(library_root: &Path, port: u16, host: &str) -> Result<(), ServerError> {
     let library = load_library(library_root)?;
     tracing::info!(
-        "Loaded library '{}' with {} component type(s)",
+        "Loaded library '{}' with {} part table(s)",
         library.name,
-        library.component_types.len()
+        library.part_tables.len()
     );
-    for ct in &library.component_types {
+    for ct in &library.part_tables {
         tracing::info!("  {} ({} parts)", ct.name, ct.components.len());
     }
 

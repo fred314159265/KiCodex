@@ -17,12 +17,12 @@ pub struct LibraryManifest {
     pub description: Option<String>,
     #[serde(alias = "schemas_path")]
     pub templates_path: String,
-    #[serde(alias = "tables")]
-    pub component_types: Vec<ComponentTypeDef>,
+    #[serde(alias = "tables", alias = "component_types")]
+    pub part_tables: Vec<PartTableDef>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ComponentTypeDef {
+pub struct PartTableDef {
     pub file: String,
     #[serde(alias = "schema")]
     pub template: String,
@@ -75,10 +75,10 @@ tables:
         let manifest = load_library_manifest(tmp.path()).unwrap();
         assert_eq!(manifest.name, "My Components Library");
         assert_eq!(manifest.templates_path, "schemas");
-        assert_eq!(manifest.component_types.len(), 2);
-        assert_eq!(manifest.component_types[0].file, "data/resistors.csv");
-        assert_eq!(manifest.component_types[0].template, "resistor");
-        assert_eq!(manifest.component_types[0].name, "Resistors");
+        assert_eq!(manifest.part_tables.len(), 2);
+        assert_eq!(manifest.part_tables[0].file, "data/resistors.csv");
+        assert_eq!(manifest.part_tables[0].template, "resistor");
+        assert_eq!(manifest.part_tables[0].name, "Resistors");
     }
 
     #[test]
@@ -98,7 +98,7 @@ tables:
 
         let manifest = load_library_manifest(tmp.path()).unwrap();
         assert_eq!(manifest.templates_path, "schemas");
-        assert_eq!(manifest.component_types.len(), 1);
-        assert_eq!(manifest.component_types[0].template, "resistor");
+        assert_eq!(manifest.part_tables.len(), 1);
+        assert_eq!(manifest.part_tables[0].template, "resistor");
     }
 }

@@ -18,7 +18,7 @@ pub async fn get_parts_by_category(
         .checked_sub(1)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let ct = library.component_types.get(idx).ok_or(StatusCode::NOT_FOUND)?;
+    let ct = library.part_tables.get(idx).ok_or(StatusCode::NOT_FOUND)?;
 
     let parts: Vec<PartSummary> = ct
         .components
@@ -43,8 +43,8 @@ pub async fn get_part_detail(
     Path(part_id): Path<String>,
 ) -> Result<Json<PartDetail>, StatusCode> {
     let part_id = part_id.strip_suffix(".json").unwrap_or(&part_id);
-    // Search all component types for the part
-    for ct in &library.component_types {
+    // Search all part tables for the part
+    for ct in &library.part_tables {
         if let Some(row) = ct
             .components
             .iter()

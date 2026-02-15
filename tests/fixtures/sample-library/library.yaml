@@ -1,7 +1,7 @@
 name: "Sample Components Library"
 templates_path: schemas
 
-component_types:
+part_tables:
   - file: data/resistors.csv
     template: resistor
     name: "Resistors"

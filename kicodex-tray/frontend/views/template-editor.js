@@ -4,10 +4,23 @@ const TemplateEditorView = {
     const libPath = params.lib;
     const templateName = params.template;
     const projectPath = params.project;
+    const isCreateMode = params.mode === 'create';
 
     if (!libPath || !templateName) { navigate('dashboard'); return; }
 
-    const template = await invoke('get_template', { libPath, templateName });
+    const defaultFields = [
+      { key: 'value', display_name: 'Name', field_type: null, required: false, visible: true, description: null },
+      { key: 'description', display_name: 'Description', field_type: null, required: false, visible: true, description: null },
+      { key: 'footprint', display_name: 'Footprint', field_type: 'kicad_footprint', required: false, visible: true, description: null },
+      { key: 'symbol', display_name: 'Symbol', field_type: 'kicad_symbol', required: false, visible: true, description: null },
+    ];
+
+    const [template, availableTemplates] = await Promise.all([
+      isCreateMode
+        ? { based_on: null, exclude_from_bom: false, exclude_from_board: false, exclude_from_sim: false, fields: defaultFields }
+        : invoke('get_template', { libPath, templateName }),
+      invoke('list_templates', { libPath, exclude: templateName }).catch(() => []),
+    ]);
 
     container.innerHTML = '';
 
@@ -16,27 +29,28 @@ const TemplateEditorView = {
       h('span', {}, ' / '),
       h('a', { href: `#project?path=${encodeURIComponent(projectPath)}` }, projectPath.split(/[\\/]/).pop()),
       h('span', {}, ' / '),
-      h('span', {}, `Template: ${templateName}`),
+      h('span', {}, isCreateMode ? `New Part Table: ${templateName}` : `Template: ${templateName}`),
     );
     container.appendChild(bc);
 
     const header = h('div', { className: 'page-header' },
-      h('h2', { className: 'page-title' }, `Template: ${templateName}`),
+      h('h2', { className: 'page-title' }, isCreateMode ? `New Part Table: ${templateName}` : `Template: ${templateName}`),
     );
     container.appendChild(header);
 
     const card = h('div', { className: 'card' });
 
-    // Based-on selector
+    // Based-on selector (dropdown)
     const basedOnGroup = h('div', { className: 'form-group' });
     basedOnGroup.appendChild(h('label', { className: 'form-label' }, 'Based On'));
-    const basedOnInput = h('input', {
-      className: 'form-input',
-      type: 'text',
-      value: template.based_on || '',
-      placeholder: '_base (or leave empty)',
-    });
-    basedOnGroup.appendChild(basedOnInput);
+    const basedOnSelect = h('select', { className: 'form-select' },
+      h('option', { value: '' }, '(none)'),
+      ...availableTemplates.map(name =>
+        h('option', { value: name }, name)
+      ),
+    );
+    basedOnSelect.value = template.based_on || '';
+    basedOnGroup.appendChild(basedOnSelect);
     card.appendChild(basedOnGroup);
 
     // Default Exclude Flags
@@ -133,58 +147,124 @@ const TemplateEditorView = {
         removeBtn,
       );
 
+      row.rowEl = rowEl;
       fieldRows.push(row);
       fieldsContainer.appendChild(rowEl);
     }
 
     for (const f of template.fields) {
-      addFieldRow(f, true);
+      addFieldRow(f, !isCreateMode);
     }
 
     card.appendChild(fieldsContainer);
 
+    // Error message container (above save button)
+    const errorMsg = h('div', { className: 'field-error-msg', style: { display: 'none' } });
+
+    // Validation function
+    function validateFields() {
+      const errors = [];
+
+      // Clear previous highlights
+      for (const row of fieldRows) {
+        row.keyInput.classList.remove('form-input-error');
+        row.nameInput.classList.remove('form-input-error');
+      }
+
+      if (fieldRows.length === 0) {
+        errors.push('At least one field is required.');
+      }
+
+      const seenKeys = new Map(); // key -> first row index
+      for (let i = 0; i < fieldRows.length; i++) {
+        const row = fieldRows[i];
+        const key = row.keyInput.value.trim();
+        const displayName = row.nameInput.value.trim();
+
+        if (!key) {
+          row.keyInput.classList.add('form-input-error');
+          errors.push(`Row ${i + 1}: Key is empty.`);
+        } else {
+          if (seenKeys.has(key)) {
+            row.keyInput.classList.add('form-input-error');
+            fieldRows[seenKeys.get(key)].keyInput.classList.add('form-input-error');
+            errors.push(`Row ${i + 1}: Duplicate key "${key}".`);
+          } else {
+            seenKeys.set(key, i);
+          }
+
+          if (!displayName) {
+            row.nameInput.classList.add('form-input-error');
+            errors.push(`Row ${i + 1}: Display name is empty for key "${key}".`);
+          }
+        }
+      }
+
+      if (errors.length > 0) {
+        errorMsg.textContent = errors.join(' ');
+        errorMsg.style.display = 'block';
+        return false;
+      }
+
+      errorMsg.style.display = 'none';
+      return true;
+    }
+
     // Add field + Save buttons
+    card.appendChild(errorMsg);
     const actions = h('div', { className: 'btn-group', style: { marginTop: '12px' } },
       h('button', { type: 'button', className: 'btn', onClick: () => addFieldRow() }, 'Add Field'),
       h('button', { type: 'button', className: 'btn btn-primary', onClick: async () => {
+        if (!validateFields()) return;
+
         const fields = fieldRows.map(r => ({
-          key: r.keyInput.value,
-          display_name: r.nameInput.value,
+          key: r.keyInput.value.trim(),
+          display_name: r.nameInput.value.trim(),
           field_type: r.typeSelect.value || null,
           required: r.reqCb.checked,
           visible: r.visCb.checked,
           description: r.descInput.value || null,
-        })).filter(f => f.key);
+        }));
 
         // Compute renames: fields whose key changed from their original
         const renames = [];
         for (const row of fieldRows) {
           const origKey = originalKeys.get(row);
-          const currentKey = row.keyInput.value;
+          const currentKey = row.keyInput.value.trim();
           if (origKey && currentKey && origKey !== currentKey) {
             renames.push({ from: origKey, to: currentKey });
           }
         }
 
+        const templateData = {
+          based_on: basedOnSelect.value || null,
+          exclude_from_bom: bomCb.checked,
+          exclude_from_board: boardCb.checked,
+          exclude_from_sim: simCb.checked,
+          fields,
+        };
+
         try {
-          await invoke('save_template', {
-            libPath,
-            templateName,
-            template: {
-              based_on: basedOnInput.value || null,
-              exclude_from_bom: bomCb.checked,
-              exclude_from_board: boardCb.checked,
-              exclude_from_sim: simCb.checked,
-              fields,
-            },
-            renames: renames.length > 0 ? renames : null,
-            deletions: deletedFieldKeys.length > 0 ? deletedFieldKeys : null,
-          });
+          if (isCreateMode) {
+            await invoke('add_part_table', {
+              libPath,
+              componentTypeName: templateName,
+              template: templateData,
+            });
+          } else {
+            await invoke('save_template', {
+              libPath,
+              templateName,
+              template: templateData,
+              renames: renames.length > 0 ? renames : null,
+              deletions: deletedFieldKeys.length > 0 ? deletedFieldKeys : null,
+            });
+          }
           navigate('project', { path: projectPath });
         } catch (e) {
           alert('Error: ' + e);
         }
-      }}, 'Save Template'),
+      }}, isCreateMode ? 'Create Part Table' : 'Save Template'),
     );
     card.appendChild(actions);
 

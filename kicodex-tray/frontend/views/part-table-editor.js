@@ -1,5 +1,5 @@
-// Component type editor view — data grid with add/edit/delete
-const ComponentTypeEditorView = {
+// Part table editor view — data grid with add/edit/delete
+const PartTableEditorView = {
   async render(container, params) {
     const libPath = params.lib;
     const componentTypeName = params.type;
@@ -7,7 +7,7 @@ const ComponentTypeEditorView = {
 
     if (!libPath || !componentTypeName) { navigate('dashboard'); return; }
 
-    const data = await invoke('get_component_type_data', { libPath, componentTypeName });
+    const data = await invoke('get_part_table_data', { libPath, componentTypeName });
 
     container.innerHTML = '';
 
