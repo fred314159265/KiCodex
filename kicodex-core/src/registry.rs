@@ -139,6 +139,11 @@ impl ProjectRegistry {
         Ok(())
     }
 
+    /// Remove a library by its auth token.
+    pub fn remove(&self, token: &str) {
+        self.libraries.remove(token);
+    }
+
     /// Get all tokens currently registered.
     pub fn tokens(&self) -> Vec<String> {
         self.libraries.iter().map(|r| r.key().clone()).collect()

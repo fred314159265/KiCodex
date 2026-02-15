@@ -4,6 +4,7 @@
   "description": "Default capabilities for KiCodex tray app",
   "windows": ["*"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:default"
   ]
 }

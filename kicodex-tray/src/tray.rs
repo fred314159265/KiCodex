@@ -1,6 +1,6 @@
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIcon;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindowBuilder, WebviewUrl};
 
 use crate::AppState;
 
@@ -20,7 +20,10 @@ pub fn build_menu(
                 .enabled(false)
                 .build(app)?,
         )
-        .item(&PredefinedMenuItem::separator(app)?);
+        .item(&PredefinedMenuItem::separator(app)?)
+        .item(&MenuItemBuilder::with_id("open-dashboard", "Open Dashboard").build(app)?);
+
+    builder = builder.item(&PredefinedMenuItem::separator(app)?);
 
     if project_names.is_empty() {
         builder = builder.item(
@@ -60,12 +63,39 @@ pub fn update_menu(app: &AppHandle, tray: &TrayIcon, project_names: &[String]) {
     }
 }
 
+/// Open or focus the dashboard window.
+fn open_dashboard(app: &AppHandle) {
+    // If window already exists, focus it
+    if let Some(window) = app.get_webview_window("dashboard") {
+        let _ = window.set_focus();
+        return;
+    }
+
+    // Create new dashboard window
+    match WebviewWindowBuilder::new(app, "dashboard", WebviewUrl::default())
+        .title("KiCodex")
+        .inner_size(1000.0, 700.0)
+        .min_inner_size(800.0, 500.0)
+        .build()
+    {
+        Ok(_) => {
+            tracing::info!("Dashboard window opened");
+        }
+        Err(e) => {
+            tracing::error!("Failed to open dashboard window: {}", e);
+        }
+    }
+}
+
 /// Handle tray menu item clicks.
 pub fn handle_menu_event(app: &AppHandle, id: &str) {
     match id {
         "quit" => {
             tracing::info!("Quit requested from tray menu");
             app.exit(0);
+        }
+        "open-dashboard" => {
+            open_dashboard(app);
         }
         "open-config" => {
             if let Some(config_dir) = dirs::config_dir() {

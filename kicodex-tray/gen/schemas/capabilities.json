@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for KiCodex tray app","local":true,"windows":["*"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for KiCodex tray app","local":true,"windows":["*"],"permissions":["core:default","dialog:default"]}}

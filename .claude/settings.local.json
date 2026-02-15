@@ -12,7 +12,20 @@
       "Bash(python:*)",
       "Bash(cargo run:*)",
       "Bash(echo:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(find:*)",
+      "WebFetch(domain:v2.tauri.app)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:tauritutorials.com)",
+      "WebFetch(domain:jonaskruckenberg.github.io)",
+      "WebFetch(domain:forum.kicad.info)",
+      "WebFetch(domain:lib.rs)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(cargo check:*)",
+      "WebFetch(domain:docs.rs)"
     ]
   }
 }

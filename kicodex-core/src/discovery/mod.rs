@@ -108,10 +108,16 @@ impl DiscoveryEngine {
 
         // Periodic process scan loop
         let mut interval = tokio::time::interval(Duration::from_secs(2));
+        // Slower interval for checking stale registrations
+        let mut cleanup_interval = tokio::time::interval(Duration::from_secs(10));
         interval.tick().await; // consume initial tick
+        cleanup_interval.tick().await;
 
         loop {
             tokio::select! {
+                _ = cleanup_interval.tick() => {
+                    self.cleanup_stale_registrations();
+                }
                 _ = interval.tick() => {
                     let dirs = process_scanner::scan_kicad_processes();
                     for dir in &dirs {
@@ -154,6 +160,52 @@ impl DiscoveryEngine {
                     }
                 }
             }
+        }
+    }
+
+    /// Remove registered projects whose kicodex.yaml or library.yaml no longer exists.
+    fn cleanup_stale_registrations(&mut self) {
+        let stale_tokens: Vec<(String, String)> = self
+            .persisted
+            .projects
+            .iter()
+            .filter(|entry| {
+                let project_dir = std::path::Path::new(&entry.project_path);
+                let library_dir = std::path::Path::new(&entry.library_path);
+                !project_dir.join("kicodex.yaml").exists()
+                    || !library_dir.join("library.yaml").exists()
+            })
+            .map(|entry| (entry.token.clone(), entry.project_path.clone()))
+            .collect();
+
+        if stale_tokens.is_empty() {
+            return;
+        }
+
+        for (token, project_path) in &stale_tokens {
+            tracing::info!(
+                "Deregistering stale project '{}' (config or library removed)",
+                project_path
+            );
+            self.registry.remove(token);
+        }
+
+        // Remove all stale entries from persisted registry
+        let stale_token_set: std::collections::HashSet<&str> =
+            stale_tokens.iter().map(|(t, _)| t.as_str()).collect();
+        self.persisted
+            .projects
+            .retain(|p| !stale_token_set.contains(p.token.as_str()));
+
+        // Save and notify
+        if let Some(registry_path) = crate::registry::PersistedRegistry::default_path() {
+            if let Err(e) = self.persisted.save(&registry_path) {
+                tracing::warn!("Failed to save registry after cleanup: {}", e);
+            }
+        }
+
+        if let Some(ref cb) = self.on_discovery {
+            cb(&self.persisted);
         }
     }
 

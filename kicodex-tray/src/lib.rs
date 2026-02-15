@@ -1,11 +1,14 @@
+mod command_types;
+mod commands;
 mod tray;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use kicodex_core::data::kicad_libs::KicadLibraries;
 use kicodex_core::discovery::DiscoveryEngine;
 use kicodex_core::registry::{PersistedRegistry, ProjectRegistry};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Shared application state accessible via `app.state()`.
 pub struct AppState {
@@ -13,6 +16,7 @@ pub struct AppState {
     pub active_projects: std::sync::Mutex<Vec<ActiveProject>>,
     pub registry: Arc<ProjectRegistry>,
     pub port: u16,
+    pub kicad_libs: std::sync::Mutex<Option<KicadLibraries>>,
 }
 
 /// An active project shown in the tray menu.
@@ -73,6 +77,30 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            commands::get_projects,
+            commands::get_project_libraries,
+            commands::scan_for_libraries,
+            commands::apply_scan,
+            commands::validate_library,
+            commands::init_project,
+            commands::create_library,
+            commands::add_table,
+            commands::get_table_rows,
+            commands::add_row,
+            commands::update_row,
+            commands::delete_row,
+            commands::get_schema,
+            commands::save_schema,
+            commands::list_kicad_libraries,
+            commands::list_kicad_entries,
+            commands::open_in_explorer,
+            commands::get_discovered_projects,
+            commands::scan_project,
+            commands::add_project,
+            commands::add_git_library,
+        ])
         .setup(move |app| {
             // Init tracing
             tracing_subscriber::fmt()
@@ -115,6 +143,18 @@ pub fn run() {
                 }
             });
 
+            // Try to load KiCad libraries (non-fatal)
+            let kicad_libs = match KicadLibraries::load(None) {
+                Ok(libs) => {
+                    tracing::info!("Loaded KiCad library tables");
+                    Some(libs)
+                }
+                Err(e) => {
+                    tracing::warn!("Could not load KiCad library tables: {}", e);
+                    None
+                }
+            };
+
             // Build initial tray menu (no active projects yet until first scan)
             let tray = app.tray_by_id("main");
 
@@ -136,6 +176,7 @@ pub fn run() {
                 active_projects: std::sync::Mutex::new(Vec::new()),
                 registry: registry.clone(),
                 port,
+                kicad_libs: std::sync::Mutex::new(kicad_libs),
             };
             app.manage(state);
 
@@ -156,6 +197,7 @@ pub fn run() {
                     if let Some(state) = app_handle_discovery.try_state::<AppState>() {
                         *state.persisted.lock().unwrap() = updated_persisted.clone();
                     }
+                    let _ = app_handle_discovery.emit("projects-changed", ());
                 })
                 .on_active_changed(move |active_dirs| {
                     if let Some(state) = app_handle_active.try_state::<AppState>() {
@@ -168,6 +210,7 @@ pub fn run() {
                             tray::update_menu(&app_handle_active, &tray, &labels);
                         }
                     }
+                    let _ = app_handle_active.emit("projects-changed", ());
                 });
 
             tauri::async_runtime::spawn(engine.start());
@@ -176,6 +219,13 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running KiCodex tray application");
+        .build(tauri::generate_context!())
+        .expect("error while building KiCodex tray application")
+        .run(|_app, event| {
+            // Prevent exit when the last window closes — this is a tray app.
+            // The user quits explicitly via the "Quit" tray menu item.
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                api.prevent_exit();
+            }
+        });
 }

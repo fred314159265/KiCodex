@@ -48,8 +48,8 @@ enum Commands {
         /// Name for the library
         name: String,
 
-        /// Parent directory for the library (default: libs)
-        #[arg(long, default_value = "libs")]
+        /// Parent directory where the library will be created
+        #[arg(long)]
         path: PathBuf,
 
         /// Name for the table (defaults to library name for new libraries)
@@ -329,42 +329,55 @@ fn run_new(name: &str, parent_dir: &std::path::Path, table: Option<&str>) -> any
         println!("  - Updated library.yaml");
     } else {
         // Scenario A: create new library
-        let table_name = table.unwrap_or(name);
-
         std::fs::create_dir_all(&lib_dir)?;
         let schemas_dir = lib_dir.join("schemas");
         std::fs::create_dir_all(&schemas_dir)?;
 
-        // Write schema
-        let schema_path = schemas_dir.join(format!("{}.yaml", table_name));
-        std::fs::write(&schema_path, schema_template())?;
+        // Build tables list — only if --table was explicitly provided
+        let mut tables = Vec::new();
+        if let Some(table_name) = table {
+            // Write schema
+            let schema_path = schemas_dir.join(format!("{}.yaml", table_name));
+            std::fs::write(&schema_path, schema_template())?;
 
-        // Write CSV
-        let csv_path = lib_dir.join(format!("{}.csv", table_name));
-        std::fs::write(&csv_path, csv_template())?;
+            // Write CSV
+            let csv_path = lib_dir.join(format!("{}.csv", table_name));
+            std::fs::write(&csv_path, csv_template())?;
+
+            tables.push(kicodex_core::data::library::TableDef {
+                name: capitalize(table_name),
+                file: format!("{}.csv", table_name),
+                schema: table_name.to_string(),
+            });
+
+            println!("Created library '{}' at {}/", name, lib_dir.display());
+            println!("  - library.yaml");
+            println!("  - schemas/{}.yaml", table_name);
+            println!("  - {}.csv", table_name);
+            println!(
+                "Add your parts to {}.csv, then run `kicodex scan` to generate kicodex.yaml",
+                table_name
+            );
+        } else {
+            println!("Created library '{}' at {}/", name, lib_dir.display());
+            println!("  - library.yaml");
+            println!("  - schemas/");
+            println!(
+                "Add tables with: kicodex new {} --path {} --table <table-name>",
+                name,
+                parent_dir.display()
+            );
+        }
 
         // Write library.yaml
         let manifest = kicodex_core::data::library::LibraryManifest {
             name: name.to_string(),
             description: Some(format!("KiCodex library: {}", name)),
             schemas_path: "schemas".to_string(),
-            tables: vec![kicodex_core::data::library::TableDef {
-                name: capitalize(table_name),
-                file: format!("{}.csv", table_name),
-                schema: table_name.to_string(),
-            }],
+            tables,
         };
         let yaml = serde_yml::to_string(&manifest)?;
         std::fs::write(&manifest_path, yaml)?;
-
-        println!("Created library '{}' at {}/", name, lib_dir.display());
-        println!("  - library.yaml");
-        println!("  - schemas/{}.yaml", table_name);
-        println!("  - {}.csv", table_name);
-        println!(
-            "Add your parts to {}.csv, then run `kicodex scan` to generate kicodex.yaml",
-            table_name
-        );
     }
 
     Ok(())

@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
@@ -15,7 +15,7 @@ pub enum SchemaError {
     MissingParent(String),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawSchema {
     pub inherits: Option<String>,
     #[serde(default)]
@@ -27,7 +27,7 @@ pub struct RawSchema {
     pub fields: IndexMap<String, FieldDef>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FieldDef {
     pub display_name: String,
     #[serde(default)]
@@ -123,6 +123,19 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
     })
 }
 
+/// Write a raw schema to a YAML file in the schemas directory.
+pub fn write_schema(
+    schemas_dir: &Path,
+    name: &str,
+    schema: &RawSchema,
+) -> Result<(), SchemaError> {
+    std::fs::create_dir_all(schemas_dir)?;
+    let path = schemas_dir.join(format!("{}.yaml", name));
+    let yaml = serde_yml::to_string(schema)?;
+    std::fs::write(&path, yaml)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,7 +157,7 @@ mod tests {
     display_name: "Description"
     required: true
   value:
-    display_name: "Value"
+    display_name: "Name"
     required: true
   symbol:
     display_name: "Symbol"

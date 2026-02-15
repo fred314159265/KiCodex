@@ -34,6 +34,17 @@ pub fn load_library_manifest(library_root: &Path) -> Result<LibraryManifest, Lib
     Ok(manifest)
 }
 
+/// Save a library manifest (library.yaml) to the given library root directory.
+pub fn save_library_manifest(
+    library_root: &Path,
+    manifest: &LibraryManifest,
+) -> Result<(), LibraryError> {
+    let manifest_path = library_root.join("library.yaml");
+    let yaml = serde_yml::to_string(manifest)?;
+    std::fs::write(&manifest_path, yaml)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

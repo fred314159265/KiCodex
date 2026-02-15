@@ -5,9 +5,9 @@
 //! Library contents are loaded lazily on first lookup to avoid reading hundreds
 //! of files when only a few libraries are actually referenced.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Result of looking up a symbol or footprint reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,8 +42,8 @@ enum LibContent {
 /// Holds KiCad symbol and footprint library table info for validation lookups.
 /// Library contents are loaded lazily on first access.
 pub struct KicadLibraries {
-    symbol_libs: RefCell<HashMap<String, LibContent>>,
-    footprint_libs: RefCell<HashMap<String, LibContent>>,
+    symbol_libs: Mutex<HashMap<String, LibContent>>,
+    footprint_libs: Mutex<HashMap<String, LibContent>>,
 }
 
 impl KicadLibraries {
@@ -111,8 +111,8 @@ impl KicadLibraries {
         }
 
         Ok(KicadLibraries {
-            symbol_libs: RefCell::new(symbol_libs),
-            footprint_libs: RefCell::new(footprint_libs),
+            symbol_libs: Mutex::new(symbol_libs),
+            footprint_libs: Mutex::new(footprint_libs),
         })
     }
 
@@ -125,11 +125,37 @@ impl KicadLibraries {
     pub fn has_footprint(&self, reference: &str) -> LibLookup {
         lazy_lookup(&self.footprint_libs, reference, load_footprint_lib)
     }
+
+    /// List all symbol library names.
+    pub fn list_symbol_libraries(&self) -> Vec<String> {
+        let map = self.symbol_libs.lock().unwrap();
+        let mut names: Vec<String> = map.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// List all footprint library names.
+    pub fn list_footprint_libraries(&self) -> Vec<String> {
+        let map = self.footprint_libs.lock().unwrap();
+        let mut names: Vec<String> = map.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// List symbol entries in a library, forcing lazy load if needed.
+    pub fn list_symbols(&self, lib_name: &str) -> Option<Vec<String>> {
+        list_entries(&self.symbol_libs, lib_name, load_symbol_lib)
+    }
+
+    /// List footprint entries in a library, forcing lazy load if needed.
+    pub fn list_footprints(&self, lib_name: &str) -> Option<Vec<String>> {
+        list_entries(&self.footprint_libs, lib_name, load_footprint_lib)
+    }
 }
 
 /// Perform a lazy lookup: load the library on first access, then check for the entry.
 fn lazy_lookup(
-    libs: &RefCell<HashMap<String, LibContent>>,
+    libs: &Mutex<HashMap<String, LibContent>>,
     reference: &str,
     loader: fn(&Path) -> Option<Vec<String>>,
 ) -> LibLookup {
@@ -137,7 +163,7 @@ fn lazy_lookup(
         return LibLookup::LibraryNotFound(reference.to_string());
     };
 
-    let mut map = libs.borrow_mut();
+    let mut map = libs.lock().unwrap();
     match map.get(lib_name) {
         None => LibLookup::LibraryNotFound(lib_name.to_string()),
         Some(LibContent::Loaded(entries)) => {
@@ -166,6 +192,36 @@ fn lazy_lookup(
                 None => {
                     map.insert(lib_name.to_string(), LibContent::Unreadable);
                     LibLookup::LibraryUnreadable(lib_name.to_string())
+                }
+            }
+        }
+    }
+}
+
+/// List all entries in a library, forcing lazy load if needed.
+fn list_entries(
+    libs: &Mutex<HashMap<String, LibContent>>,
+    lib_name: &str,
+    loader: fn(&Path) -> Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    let mut map = libs.lock().unwrap();
+    match map.get(lib_name) {
+        None => None,
+        Some(LibContent::Loaded(entries)) => Some(entries.clone()),
+        Some(LibContent::Unreadable) => None,
+        Some(LibContent::Pending(_)) => {
+            let LibContent::Pending(path) = map.remove(lib_name).unwrap() else {
+                unreachable!()
+            };
+            match loader(&path) {
+                Some(entries) => {
+                    let result = entries.clone();
+                    map.insert(lib_name.to_string(), LibContent::Loaded(entries));
+                    Some(result)
+                }
+                None => {
+                    map.insert(lib_name.to_string(), LibContent::Unreadable);
+                    None
                 }
             }
         }
@@ -614,7 +670,7 @@ mod tests {
             "Device".to_string(),
             LibContent::Loaded(vec!["R".to_string(), "C".to_string()]),
         );
-        let libs = RefCell::new(libs);
+        let libs = Mutex::new(libs);
 
         assert_eq!(lazy_lookup(&libs, "Device:R", |_| None), LibLookup::Found);
     }
@@ -626,7 +682,7 @@ mod tests {
             "Device".to_string(),
             LibContent::Loaded(vec!["R".to_string()]),
         );
-        let libs = RefCell::new(libs);
+        let libs = Mutex::new(libs);
 
         assert_eq!(
             lazy_lookup(&libs, "Device:L", |_| None),
@@ -636,7 +692,7 @@ mod tests {
 
     #[test]
     fn test_lookup_library_not_found() {
-        let libs: RefCell<HashMap<String, LibContent>> = RefCell::new(HashMap::new());
+        let libs: Mutex<HashMap<String, LibContent>> = Mutex::new(HashMap::new());
 
         assert_eq!(
             lazy_lookup(&libs, "Missing:R", |_| None),
@@ -648,7 +704,7 @@ mod tests {
     fn test_lookup_library_unreadable() {
         let mut libs = HashMap::new();
         libs.insert("Broken".to_string(), LibContent::Unreadable);
-        let libs = RefCell::new(libs);
+        let libs = Mutex::new(libs);
 
         assert_eq!(
             lazy_lookup(&libs, "Broken:X", |_| None),

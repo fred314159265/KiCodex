@@ -117,7 +117,7 @@ pub fn load_csv_with_ids(path: &Path) -> Result<Vec<CsvRow>, CsvError> {
 }
 
 /// Write rows back to a CSV file using temp file + rename for safety.
-fn write_csv(path: &Path, rows: &[CsvRow]) -> Result<(), CsvError> {
+pub fn write_csv(path: &Path, rows: &[CsvRow]) -> Result<(), CsvError> {
     if rows.is_empty() {
         return Ok(());
     }
@@ -147,6 +147,88 @@ fn write_csv(path: &Path, rows: &[CsvRow]) -> Result<(), CsvError> {
 
     std::fs::rename(&temp_path, path)?;
 
+    Ok(())
+}
+
+/// Append a new row to a CSV file, auto-assigning an ID.
+/// Returns the assigned ID.
+pub fn append_row(path: &Path, fields: &CsvRow) -> Result<String, CsvError> {
+    let mut rows = load_csv_with_ids(path)?;
+
+    // Find next integer ID
+    let mut max_id: u64 = 0;
+    for row in &rows {
+        if let Some(id) = row.get("id") {
+            if let Ok(n) = id.parse::<u64>() {
+                max_id = max_id.max(n);
+            }
+        }
+    }
+    let new_id = (max_id + 1).to_string();
+
+    // Build new row with id first, then existing columns from first row as template
+    let mut new_row = IndexMap::new();
+    new_row.insert("id".to_string(), new_id.clone());
+
+    if let Some(first) = rows.first() {
+        for key in first.keys() {
+            if key != "id" {
+                let value = fields.get(key).cloned().unwrap_or_default();
+                new_row.insert(key.clone(), value);
+            }
+        }
+    }
+    // Add any extra fields not already in headers
+    for (key, value) in fields {
+        if !new_row.contains_key(key) && key != "id" {
+            new_row.insert(key.clone(), value.clone());
+        }
+    }
+
+    rows.push(new_row);
+    write_csv(path, &rows)?;
+    Ok(new_id)
+}
+
+/// Update an existing row by ID.
+pub fn update_row(path: &Path, id: &str, fields: &CsvRow) -> Result<(), CsvError> {
+    let mut rows = load_csv_with_ids(path)?;
+
+    let row = rows
+        .iter_mut()
+        .find(|r| r.get("id").map(|v| v.as_str()) == Some(id));
+
+    match row {
+        Some(row) => {
+            for (key, value) in fields {
+                if key != "id" {
+                    row.insert(key.clone(), value.clone());
+                }
+            }
+            write_csv(path, &rows)?;
+            Ok(())
+        }
+        None => Err(CsvError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("row with id '{}' not found", id),
+        ))),
+    }
+}
+
+/// Delete a row by ID.
+pub fn delete_row(path: &Path, id: &str) -> Result<(), CsvError> {
+    let mut rows = load_csv_with_ids(path)?;
+    let original_len = rows.len();
+    rows.retain(|r| r.get("id").map(|v| v.as_str()) != Some(id));
+
+    if rows.len() == original_len {
+        return Err(CsvError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("row with id '{}' not found", id),
+        )));
+    }
+
+    write_csv(path, &rows)?;
     Ok(())
 }
 
