@@ -545,9 +545,9 @@ pub fn add_part_table(
 
         let raw = kicodex_core::data::schema::RawTemplate {
             based_on: tmpl.based_on.clone(),
-            exclude_from_bom: tmpl.exclude_from_bom,
-            exclude_from_board: tmpl.exclude_from_board,
-            exclude_from_sim: tmpl.exclude_from_sim,
+            exclude_from_bom: Some(tmpl.exclude_from_bom),
+            exclude_from_board: Some(tmpl.exclude_from_board),
+            exclude_from_sim: Some(tmpl.exclude_from_sim),
             fields,
         };
 
@@ -821,9 +821,9 @@ pub fn save_template(
 
     let raw = kicodex_core::data::schema::RawTemplate {
         based_on: template.based_on,
-        exclude_from_bom: template.exclude_from_bom,
-        exclude_from_board: template.exclude_from_board,
-        exclude_from_sim: template.exclude_from_sim,
+        exclude_from_bom: Some(template.exclude_from_bom),
+        exclude_from_board: Some(template.exclude_from_board),
+        exclude_from_sim: Some(template.exclude_from_sim),
         fields,
     };
 
@@ -847,7 +847,7 @@ pub fn list_templates(lib_path: String, exclude: Option<String>) -> Result<Vec<S
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok())
         .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
-        .filter(|name| exclude.as_ref().map_or(true, |ex| name != ex))
+        .filter(|name| exclude.as_ref() != Some(name))
         .collect();
 
     Ok(names)

@@ -19,12 +19,12 @@ pub enum SchemaError {
 pub struct RawSchema {
     #[serde(alias = "inherits")]
     pub based_on: Option<String>,
-    #[serde(default)]
-    pub exclude_from_bom: bool,
-    #[serde(default)]
-    pub exclude_from_board: bool,
-    #[serde(default)]
-    pub exclude_from_sim: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_from_bom: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_from_board: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_from_sim: Option<bool>,
     pub fields: IndexMap<String, FieldDef>,
 }
 
@@ -67,9 +67,9 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
         let base =
             base.ok_or_else(|| SchemaError::MissingBase(schemas_dir.display().to_string()))?;
         return Ok(ResolvedSchema {
-            exclude_from_bom: base.exclude_from_bom,
-            exclude_from_board: base.exclude_from_board,
-            exclude_from_sim: base.exclude_from_sim,
+            exclude_from_bom: base.exclude_from_bom.unwrap_or(false),
+            exclude_from_board: base.exclude_from_board.unwrap_or(false),
+            exclude_from_sim: base.exclude_from_sim.unwrap_or(false),
             fields: base.fields,
         });
     }
@@ -80,37 +80,30 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
     let raw: RawSchema = serde_yml::from_str(&content)?;
 
     let mut fields = IndexMap::new();
-    let mut exclude_from_bom = raw.exclude_from_bom;
-    let mut exclude_from_board = raw.exclude_from_board;
-    let mut exclude_from_sim = raw.exclude_from_sim;
+    let mut exclude_from_bom = raw.exclude_from_bom.unwrap_or(false);
+    let mut exclude_from_board = raw.exclude_from_board.unwrap_or(false);
+    let mut exclude_from_sim = raw.exclude_from_sim.unwrap_or(false);
 
-    // If this schema inherits from base, start with base values
+    // If this schema inherits from a parent, start with parent values
+    // and let child override only when explicitly set (Some).
     if let Some(ref parent_name) = raw.based_on {
         let parent = if parent_name == "_base" {
             let base =
                 base.ok_or_else(|| SchemaError::MissingBase(schemas_dir.display().to_string()))?;
             ResolvedSchema {
-                exclude_from_bom: base.exclude_from_bom,
-                exclude_from_board: base.exclude_from_board,
-                exclude_from_sim: base.exclude_from_sim,
+                exclude_from_bom: base.exclude_from_bom.unwrap_or(false),
+                exclude_from_board: base.exclude_from_board.unwrap_or(false),
+                exclude_from_sim: base.exclude_from_sim.unwrap_or(false),
                 fields: base.fields,
             }
         } else {
             load_schema(schemas_dir, parent_name)?
         };
         fields.extend(parent.fields);
-        // Child overrides parent only if explicitly set (non-default).
-        // Since we can't distinguish "not set" from "set to false" with serde defaults,
-        // the child's values always win.
-        if !raw.exclude_from_bom {
-            exclude_from_bom = parent.exclude_from_bom;
-        }
-        if !raw.exclude_from_board {
-            exclude_from_board = parent.exclude_from_board;
-        }
-        if !raw.exclude_from_sim {
-            exclude_from_sim = parent.exclude_from_sim;
-        }
+        // None → inherit from parent; Some(value) → use child's explicit value
+        exclude_from_bom = raw.exclude_from_bom.unwrap_or(parent.exclude_from_bom);
+        exclude_from_board = raw.exclude_from_board.unwrap_or(parent.exclude_from_board);
+        exclude_from_sim = raw.exclude_from_sim.unwrap_or(parent.exclude_from_sim);
     }
 
     // Type-specific fields override/extend base fields
@@ -269,5 +262,49 @@ fields:
 
         let result = load_schema(&schemas_dir, "nonexistent");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_child_can_override_parent_bool_to_false() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        fs::create_dir_all(&schemas_dir).unwrap();
+
+        // Parent sets exclude_from_bom: true
+        fs::write(
+            schemas_dir.join("_base.yaml"),
+            "exclude_from_bom: true\nfields:\n  mpn:\n    display_name: MPN\n    required: true\n",
+        ).unwrap();
+
+        // Child explicitly sets exclude_from_bom: false
+        fs::write(
+            schemas_dir.join("child.yaml"),
+            "based_on: _base\nexclude_from_bom: false\nfields:\n  extra:\n    display_name: Extra\n",
+        ).unwrap();
+
+        let schema = load_schema(&schemas_dir, "child").unwrap();
+        assert!(!schema.exclude_from_bom, "child should override parent's true to false");
+    }
+
+    #[test]
+    fn test_child_inherits_parent_bool_when_omitted() {
+        let tmp = TempDir::new().unwrap();
+        let schemas_dir = tmp.path().join("schemas");
+        fs::create_dir_all(&schemas_dir).unwrap();
+
+        // Parent sets exclude_from_bom: true
+        fs::write(
+            schemas_dir.join("_base.yaml"),
+            "exclude_from_bom: true\nfields:\n  mpn:\n    display_name: MPN\n    required: true\n",
+        ).unwrap();
+
+        // Child omits exclude_from_bom entirely
+        fs::write(
+            schemas_dir.join("child.yaml"),
+            "based_on: _base\nfields:\n  extra:\n    display_name: Extra\n",
+        ).unwrap();
+
+        let schema = load_schema(&schemas_dir, "child").unwrap();
+        assert!(schema.exclude_from_bom, "child should inherit parent's true when field is omitted");
     }
 }

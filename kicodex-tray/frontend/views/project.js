@@ -111,7 +111,7 @@ async function doNewLibrary(projectPath) {
     autofocus: true,
   });
 
-  const errorDiv = h('div', { style: { color: 'var(--danger)', fontSize: '12px', minHeight: '16px' } });
+  const errorDiv = h('div', { style: { color: 'var(--error)', fontSize: '12px', minHeight: '16px' } });
 
   const createBtn = h('button', {
     className: 'btn btn-primary',
@@ -177,7 +177,7 @@ async function doAddPartTable(lib, projectPath) {
     autofocus: true,
   });
 
-  const errorDiv = h('div', { style: { color: 'var(--danger)', fontSize: '12px', minHeight: '16px' } });
+  const errorDiv = h('div', { style: { color: 'var(--error)', fontSize: '12px', minHeight: '16px' } });
 
   const createBtn = h('button', {
     className: 'btn btn-primary',
