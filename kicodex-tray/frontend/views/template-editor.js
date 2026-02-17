@@ -9,10 +9,10 @@ const TemplateEditorView = {
     if (!libPath || !templateName) { navigate('dashboard'); return; }
 
     const defaultFields = [
-      { key: 'value', display_name: 'Name', field_type: null, required: false, visible: true, description: null },
-      { key: 'description', display_name: 'Description', field_type: null, required: false, visible: true, description: null },
-      { key: 'footprint', display_name: 'Footprint', field_type: 'kicad_footprint', required: false, visible: true, description: null },
-      { key: 'symbol', display_name: 'Symbol', field_type: 'kicad_symbol', required: false, visible: true, description: null },
+      { key: 'value', display_name: 'Name', field_type: null, required: true, visible: true, description: null },
+      { key: 'description', display_name: 'Description', field_type: null, required: true, visible: true, description: null },
+      { key: 'footprint', display_name: 'Footprint', field_type: 'kicad_footprint', required: true, visible: true, description: null },
+      { key: 'symbol', display_name: 'Symbol', field_type: 'kicad_symbol', required: true, visible: true, description: null },
     ];
 
     const [template, availableTemplates] = await Promise.all([

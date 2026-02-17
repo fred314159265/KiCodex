@@ -70,6 +70,48 @@ pub fn remove_project(state: State<'_, AppState>, project_path: String) -> Resul
 }
 
 #[tauri::command]
+pub fn remove_library(
+    state: State<'_, AppState>,
+    project_path: String,
+    library_path: String,
+) -> Result<(), String> {
+    let registry_path = kicodex_core::registry::PersistedRegistry::default_path()
+        .ok_or_else(|| "Could not determine config directory".to_string())?;
+
+    let mut persisted = state.persisted.lock().unwrap();
+
+    let clean = |s: &str| s.strip_prefix(r"\\?\").unwrap_or(s).to_string();
+
+    // Find the matching entry (compare with \\?\ prefix stripped)
+    let entry = persisted
+        .projects
+        .iter()
+        .find(|p| clean(&p.project_path) == project_path && clean(&p.library_path) == library_path)
+        .cloned()
+        .ok_or_else(|| "Library not found in project".to_string())?;
+
+    // Remove from runtime registry
+    state.registry.remove(&entry.token);
+
+    // Delete .kicad_httplib from the library directory
+    let lib_dir = PathBuf::from(&entry.library_path);
+    let httplib_in_lib = lib_dir.join(format!("{}.kicad_httplib", entry.name));
+    let _ = std::fs::remove_file(&httplib_in_lib);
+
+    // Delete .kicad_httplib from the project directory
+    let proj_dir = PathBuf::from(&entry.project_path);
+    let httplib_in_proj = proj_dir.join(format!("{}.kicad_httplib", entry.name));
+    let _ = std::fs::remove_file(&httplib_in_proj);
+
+    // Remove from persisted registry and save (use raw paths for retain)
+    let token = entry.token.clone();
+    persisted.projects.retain(|p| p.token != token);
+    persisted.save(&registry_path).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_projects(state: State<'_, AppState>) -> Result<Vec<ProjectInfo>, String> {
     let persisted = state.persisted.lock().unwrap();
     let active = state.active_projects.lock().unwrap();
@@ -352,24 +394,34 @@ pub fn validate_library(
                         match result {
                             LibLookup::Found => {}
                             LibLookup::LibraryNotFound(lib) => {
-                                warnings.push(ValidationIssue {
+                                let issue = ValidationIssue {
                                     row: Some(row_num),
                                     id: Some(row_id.clone()),
                                     message: format!(
                                         "{} library '{}' not found in lib tables",
                                         kind, lib
                                     ),
-                                });
+                                };
+                                if field_def.required {
+                                    errors.push(issue);
+                                } else {
+                                    warnings.push(issue);
+                                }
                             }
                             LibLookup::EntryNotFound(lib, entry) => {
-                                warnings.push(ValidationIssue {
+                                let issue = ValidationIssue {
                                     row: Some(row_num),
                                     id: Some(row_id.clone()),
                                     message: format!(
                                         "{} '{}' not found in library '{}'",
                                         kind, entry, lib
                                     ),
-                                });
+                                };
+                                if field_def.required {
+                                    errors.push(issue);
+                                } else {
+                                    warnings.push(issue);
+                                }
                             }
                             LibLookup::LibraryUnreadable(_) => {}
                         }
@@ -569,7 +621,7 @@ pub fn add_part_table(
         .map_err(|e| e.to_string())?;
     } else {
         // Default template (CLI compat)
-        let template_content = "fields:\n  value:\n    display_name: Name\n    visible: true\n  description:\n    display_name: Description\n    visible: true\n  footprint:\n    display_name: Footprint\n    visible: true\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: true\n    type: kicad_symbol\n";
+        let template_content = "fields:\n  value:\n    display_name: Name\n    visible: true\n    required: true\n  description:\n    display_name: Description\n    visible: true\n    required: true\n  footprint:\n    display_name: Footprint\n    visible: true\n    required: true\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: true\n    required: true\n    type: kicad_symbol\n";
         std::fs::write(
             templates_dir.join(format!("{}.yaml", component_type_name)),
             template_content,
@@ -588,6 +640,52 @@ pub fn add_part_table(
         file: format!("{}.csv", component_type_name),
         template: component_type_name,
     });
+
+    kicodex_core::data::library::save_library_manifest(&lib_dir, &manifest)
+        .map_err(|e| e.to_string())?;
+
+    reload_registry_for_path(&state, &lib_dir);
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_part_table(
+    state: State<'_, AppState>,
+    lib_path: String,
+    part_table_name: String,
+) -> Result<(), String> {
+    let lib_dir = PathBuf::from(&lib_path);
+    let mut manifest = kicodex_core::data::library::load_library_manifest(&lib_dir)
+        .map_err(|e| e.to_string())?;
+
+    let idx = manifest
+        .part_tables
+        .iter()
+        .position(|t| t.name == part_table_name || t.template == part_table_name)
+        .ok_or_else(|| format!("Part table '{}' not found", part_table_name))?;
+
+    let removed = manifest.part_tables.remove(idx);
+
+    // Delete the CSV data file
+    let csv_path = lib_dir.join(&removed.file);
+    if csv_path.exists() {
+        std::fs::remove_file(&csv_path).map_err(|e| e.to_string())?;
+    }
+
+    // Delete the template YAML only if no other part table references the same template
+    let template_still_used = manifest
+        .part_tables
+        .iter()
+        .any(|t| t.template == removed.template);
+
+    if !template_still_used {
+        let templates_dir = lib_dir.join(&manifest.templates_path);
+        let template_path = templates_dir.join(format!("{}.yaml", removed.template));
+        if template_path.exists() {
+            std::fs::remove_file(&template_path).map_err(|e| e.to_string())?;
+        }
+    }
 
     kicodex_core::data::library::save_library_manifest(&lib_dir, &manifest)
         .map_err(|e| e.to_string())?;

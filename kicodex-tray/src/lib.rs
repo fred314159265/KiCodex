@@ -98,6 +98,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::remove_project,
+            commands::remove_library,
             commands::get_projects,
             commands::get_project_libraries,
             commands::scan_for_libraries,
@@ -106,6 +107,7 @@ pub fn run() {
             commands::init_project,
             commands::create_library,
             commands::add_part_table,
+            commands::delete_part_table,
             commands::get_part_table_data,
             commands::add_component,
             commands::update_component,

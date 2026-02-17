@@ -43,6 +43,7 @@ const ProjectView = {
         h('div', { className: 'btn-group' },
           h('button', { className: 'btn', onClick: () => doValidate(lib, projectPath) }, 'Validate'),
           h('button', { className: 'btn', onClick: () => doAddPartTable(lib, projectPath) }, 'Add Part Table'),
+          h('button', { className: 'btn btn-danger', onClick: () => doDeleteLibrary(lib, projectPath) }, 'Delete Library'),
         ),
       );
       section.appendChild(header);
@@ -72,10 +73,16 @@ const ProjectView = {
             h('td', {}, ct.template_name),
             h('td', {}, String(ct.component_count)),
             h('td', {},
-              h('button', {
-                className: 'btn btn-sm',
-                onClick: () => navigate('template-editor', { lib: lib.path, template: ct.template_name, project: projectPath })
-              }, 'Template'),
+              h('div', { className: 'btn-group' },
+                h('button', {
+                  className: 'btn btn-sm',
+                  onClick: () => navigate('template-editor', { lib: lib.path, template: ct.template_name, project: projectPath })
+                }, 'Template'),
+                h('button', {
+                  className: 'btn btn-sm btn-danger',
+                  onClick: () => doDeletePartTable(lib.path, ct.name, projectPath)
+                }, 'Delete'),
+              ),
             ),
           );
           tbody.appendChild(tr);
@@ -95,6 +102,31 @@ async function doRemoveProject(projectPath) {
   try {
     await invoke('remove_project', { projectPath });
     navigate('dashboard');
+  } catch (e) {
+    alert('Error: ' + e);
+  }
+}
+
+async function doDeleteLibrary(lib, projectPath) {
+  const yes = await window.__TAURI__.dialog.confirm(
+    `Delete library "${lib.name}"? This will remove it from the project (the files on disk will not be deleted).`,
+    { title: 'Delete Library', kind: 'warning' },
+  );
+  if (!yes) return;
+  try {
+    await invoke('remove_library', { projectPath, libraryPath: lib.path });
+    renderRoute();
+  } catch (e) {
+    alert('Error: ' + e);
+  }
+}
+
+async function doDeletePartTable(libPath, name, projectPath) {
+  const yes = await window.__TAURI__.dialog.confirm(`Delete part table "${name}"? This will remove its data file and template.`, { title: 'Delete Part Table', kind: 'warning' });
+  if (!yes) return;
+  try {
+    await invoke('delete_part_table', { libPath, partTableName: name });
+    renderRoute();
   } catch (e) {
     alert('Error: ' + e);
   }

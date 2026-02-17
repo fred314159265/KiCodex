@@ -84,6 +84,7 @@ body {
 .nav-links a:hover { background: var(--bg-hover); color: var(--text); }
 
 #app { padding: 16px; max-width: 1200px; margin: 0 auto; }
+#app.view-wide { max-width: none; }
 
 /* Buttons */
 .btn {
@@ -429,6 +430,61 @@ body {
   border-radius: 4px;
 }
 .btn-icon:hover { background: var(--bg-hover); color: var(--error); }
+
+/* jspreadsheet grid container */
+#grid {
+  margin-top: 8px;
+}
+
+/* jspreadsheet theme — light */
+.jss {
+  --color-brand: var(--accent);
+  font-size: 13px;
+}
+
+/* jspreadsheet dark theme override */
+@media (prefers-color-scheme: dark) {
+  .jss {
+    --gray-50:   #1a1a1a;
+    --gray-100:  #252525;
+    --gray-200:  #333333;
+    --gray-300:  #404040;
+    --gray-500:  #999999;
+    --gray-700:  #cccccc;
+    --gray-900:  #e5e5e5;
+    --color-black: #e5e5e5;
+    --color-brand: var(--accent);
+  }
+  .jss .jss_content tbody td {
+    background: var(--bg);
+    color: var(--text);
+  }
+  .jss .jss_content thead td {
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+  }
+  .jss .jss_content {
+    border-color: var(--border);
+  }
+}
+
+/* KiCad browse button in cells */
+.cell-browse-btn {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+td:hover .cell-browse-btn { opacity: 1; }
 
 /* Template editor validation */
 .form-input-error { outline: 2px solid var(--error); }

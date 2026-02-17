@@ -4,6 +4,10 @@
 // where window.__TAURI__ is undefined during top-level script execution.
 let invoke;
 
+// Navigation guard: views can set this to block navigation when dirty
+let navigationGuard = null;
+let _previousHash = window.location.hash;
+
 function initTauri() {
   if (invoke) return true;
   if (window.__TAURI__ && window.__TAURI__.core) {
@@ -45,7 +49,39 @@ const views = {
   'template-editor': TemplateEditorView,
 };
 
+// Custom in-page confirm modal (confirm() is non-blocking in Tauri WebView2)
+let _navConfirmPending = false;
+function showNavConfirm(message) {
+  return new Promise((resolve) => {
+    const overlay = h('div', { className: 'modal-overlay' },
+      h('div', { className: 'modal', style: { width: '400px' } },
+        h('div', { className: 'modal-header' }, h('h3', {}, 'Unsaved Changes')),
+        h('div', { style: { padding: '16px', fontSize: '14px' } }, message),
+        h('div', { style: { padding: '12px 16px', display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: '1px solid var(--border)' } },
+          h('button', { className: 'btn', onClick: () => { overlay.remove(); resolve(false); } }, 'Stay'),
+          h('button', { className: 'btn btn-danger', onClick: () => { overlay.remove(); resolve(true); } }, 'Discard & Leave'),
+        ),
+      ),
+    );
+    document.body.appendChild(overlay);
+  });
+}
+
 async function renderRoute() {
+  // Check navigation guard BEFORE touching the DOM so the current view stays intact
+  if (navigationGuard && navigationGuard()) {
+    if (_navConfirmPending) return; // modal already showing, ignore duplicate hashchange
+    _navConfirmPending = true;
+    const wantsToLeave = await showNavConfirm('You have unsaved changes. Discard and leave?');
+    _navConfirmPending = false;
+    if (!wantsToLeave) {
+      history.replaceState(null, '', _previousHash);
+      return;
+    }
+    navigationGuard = null;
+  }
+  _previousHash = window.location.hash;
+
   const container = document.getElementById('app');
 
   if (!initTauri()) {
@@ -56,6 +92,7 @@ async function renderRoute() {
     return;
   }
 
+  container.classList.remove('view-wide');
   container.innerHTML = '<div class="loading">Loading...</div>';
 
   const { view, params } = parseRoute();
@@ -73,7 +110,9 @@ async function renderRoute() {
   }
 }
 
-window.addEventListener('hashchange', renderRoute);
+window.addEventListener('hashchange', () => {
+  renderRoute();
+});
 window.addEventListener('DOMContentLoaded', () => {
   renderRoute();
 
