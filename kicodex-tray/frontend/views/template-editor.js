@@ -24,13 +24,20 @@ const TemplateEditorView = {
 
     container.innerHTML = '';
 
-    const bc = h('div', { className: 'breadcrumb' },
+    const bcParts = [
       h('a', { href: '#dashboard' }, 'Dashboard'),
       h('span', {}, ' / '),
-      h('a', { href: `#project?path=${encodeURIComponent(projectPath)}` }, projectPath.split(/[\\/]/).pop()),
-      h('span', {}, ' / '),
-      h('span', {}, isCreateMode ? `New Part Table: ${templateName}` : `Template: ${templateName}`),
-    );
+    ];
+    if (projectPath) {
+      bcParts.push(h('a', { href: `#project?path=${encodeURIComponent(projectPath)}` }, projectPath.split(/[\\/]/).pop()));
+    } else {
+      // Standalone library — link back to library view
+      const libName = libPath.split(/[\\/]/).pop() || libPath;
+      bcParts.push(h('a', { href: `#library?path=${encodeURIComponent(libPath)}` }, libName));
+    }
+    bcParts.push(h('span', {}, ' / '));
+    bcParts.push(h('span', {}, isCreateMode ? `New Part Table: ${templateName}` : `Template: ${templateName}`));
+    const bc = h('div', { className: 'breadcrumb' }, ...bcParts);
     container.appendChild(bc);
 
     const header = h('div', { className: 'page-header' },
@@ -260,7 +267,11 @@ const TemplateEditorView = {
               deletions: deletedFieldKeys.length > 0 ? deletedFieldKeys : null,
             });
           }
-          navigate('project', { path: projectPath });
+          if (projectPath) {
+            navigate('project', { path: projectPath });
+          } else {
+            navigate('library', { path: libPath });
+          }
         } catch (e) {
           alert('Error: ' + e);
         }

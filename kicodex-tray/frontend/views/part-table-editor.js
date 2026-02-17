@@ -13,13 +13,20 @@ const PartTableEditorView = {
 
     container.innerHTML = '';
 
-    const bc = h('div', { className: 'breadcrumb' },
+    const bcParts = [
       h('a', { href: '#dashboard' }, 'Dashboard'),
       h('span', {}, ' / '),
-      h('a', { href: `#project?path=${encodeURIComponent(projectPath)}` }, projectPath.split(/[\\/]/).pop()),
-      h('span', {}, ' / '),
-      h('span', {}, data.name),
-    );
+    ];
+    if (projectPath) {
+      bcParts.push(h('a', { href: `#project?path=${encodeURIComponent(projectPath)}` }, projectPath.split(/[\\/]/).pop()));
+    } else {
+      // Standalone library — link back to library view
+      const libName = libPath.split(/[\\/]/).pop() || libPath;
+      bcParts.push(h('a', { href: `#library?path=${encodeURIComponent(libPath)}` }, libName));
+    }
+    bcParts.push(h('span', {}, ' / '));
+    bcParts.push(h('span', {}, data.name));
+    const bc = h('div', { className: 'breadcrumb' }, ...bcParts);
     container.appendChild(bc);
 
     const fields = data.template.fields;
@@ -51,13 +58,12 @@ const PartTableEditorView = {
           td.style.position = 'relative';
           const btn = document.createElement('button');
           btn.className = 'cell-browse-btn';
-          btn.textContent = '...';
           btn.addEventListener('mousedown', (ev) => {
             ev.preventDefault();
             ev.stopPropagation();
             openPicker(col._kicadKind, (val) => {
               ws.setValueFromCoords(x, y, val);
-            });
+            }, value || '');
           });
           td.appendChild(btn);
         };
@@ -144,6 +150,7 @@ const PartTableEditorView = {
       onbeforeinsertrow: handleBeforeInsertRow,
       oninsertrow: handleInsertRow,
       onbeforedeleterow: handleBeforeDeleteRow,
+      oncopy: handleCopy,
     });
 
     const ws = spreadsheet[0];
@@ -293,6 +300,12 @@ const PartTableEditorView = {
     }
 
     // --- Event handlers ---
+
+    // jspreadsheet copy includes innerHTML of custom-rendered cells,
+    // which picks up the browse button markup. Strip all HTML tags.
+    function handleCopy(worksheet, coords, text, style) {
+      return text.replace(/<[^>]*>/g, '');
+    }
 
     function handleChanges(instance, records) {
       // Ignore changes triggered by setValueFromCoords during save

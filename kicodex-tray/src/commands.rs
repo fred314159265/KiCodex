@@ -41,7 +41,7 @@ pub fn remove_project(state: State<'_, AppState>, project_path: String) -> Resul
     let entries: Vec<_> = persisted
         .projects
         .iter()
-        .filter(|p| p.project_path == project_path)
+        .filter(|p| p.project_path.as_deref() == Some(project_path.as_str()))
         .cloned()
         .collect();
 
@@ -57,9 +57,11 @@ pub fn remove_project(state: State<'_, AppState>, project_path: String) -> Resul
         let _ = std::fs::remove_file(&httplib_in_lib);
 
         // Delete .kicad_httplib from the project directory
-        let proj_dir = PathBuf::from(&entry.project_path);
-        let httplib_in_proj = proj_dir.join(format!("{}.kicad_httplib", entry.name));
-        let _ = std::fs::remove_file(&httplib_in_proj);
+        if let Some(ref proj_path) = entry.project_path {
+            let proj_dir = PathBuf::from(proj_path);
+            let httplib_in_proj = proj_dir.join(format!("{}.kicad_httplib", entry.name));
+            let _ = std::fs::remove_file(&httplib_in_proj);
+        }
     }
 
     // Remove from persisted registry and save
@@ -86,7 +88,10 @@ pub fn remove_library(
     let entry = persisted
         .projects
         .iter()
-        .find(|p| clean(&p.project_path) == project_path && clean(&p.library_path) == library_path)
+        .find(|p| {
+            p.project_path.as_deref().map(clean) == Some(project_path.clone())
+                && clean(&p.library_path) == library_path
+        })
         .cloned()
         .ok_or_else(|| "Library not found in project".to_string())?;
 
@@ -99,9 +104,11 @@ pub fn remove_library(
     let _ = std::fs::remove_file(&httplib_in_lib);
 
     // Delete .kicad_httplib from the project directory
-    let proj_dir = PathBuf::from(&entry.project_path);
-    let httplib_in_proj = proj_dir.join(format!("{}.kicad_httplib", entry.name));
-    let _ = std::fs::remove_file(&httplib_in_proj);
+    if let Some(ref proj_path) = entry.project_path {
+        let proj_dir = PathBuf::from(proj_path);
+        let httplib_in_proj = proj_dir.join(format!("{}.kicad_httplib", entry.name));
+        let _ = std::fs::remove_file(&httplib_in_proj);
+    }
 
     // Remove from persisted registry and save (use raw paths for retain)
     let token = entry.token.clone();
@@ -138,7 +145,11 @@ pub fn get_projects(state: State<'_, AppState>) -> Result<Vec<ProjectInfo>, Stri
             name: entry.name.clone(),
             project_path: entry.project_path.clone(),
             library_path: clean_lib_path,
-            active: active_paths.contains(&entry.project_path),
+            active: entry
+                .project_path
+                .as_ref()
+                .map(|pp| active_paths.contains(pp))
+                .unwrap_or(false),
             part_table_count,
         });
     }
@@ -154,7 +165,7 @@ pub fn get_project_libraries(
     let entries: Vec<_> = persisted
         .projects
         .iter()
-        .filter(|p| p.project_path == project_path)
+        .filter(|p| p.project_path.as_deref() == Some(project_path.as_str()))
         .collect();
 
     let mut libraries = Vec::new();
@@ -501,7 +512,7 @@ pub fn init_project(
 
         persisted.upsert(kicodex_core::registry::ProjectEntry {
             token: token.clone(),
-            project_path: project_dir.to_string_lossy().to_string(),
+            project_path: Some(project_dir.to_string_lossy().to_string()),
             library_path: library_path.to_string_lossy().to_string(),
             name: lib_ref.name.clone(),
             description: description.clone(),
@@ -538,7 +549,11 @@ pub fn init_project(
 }
 
 #[tauri::command]
-pub fn create_library(name: String, parent_dir: String) -> Result<String, String> {
+pub fn create_library(
+    state: State<'_, AppState>,
+    name: String,
+    parent_dir: String,
+) -> Result<String, String> {
     let lib_dir = PathBuf::from(&parent_dir).join(&name);
     if lib_dir.join("library.yaml").exists() {
         return Err(format!("Library '{}' already exists", name));
@@ -558,7 +573,147 @@ pub fn create_library(name: String, parent_dir: String) -> Result<String, String
     kicodex_core::data::library::save_library_manifest(&lib_dir, &manifest)
         .map_err(|e| e.to_string())?;
 
-    Ok(lib_dir.to_string_lossy().to_string())
+    // Auto-register as standalone library
+    let lib_path_str = lib_dir.to_string_lossy().to_string();
+    let _ = do_register_standalone(&state, &lib_path_str, &name, manifest.description.clone());
+
+    Ok(lib_path_str)
+}
+
+/// Shared logic for registering a standalone library in persisted + runtime registries.
+fn do_register_standalone(
+    state: &AppState,
+    library_path: &str,
+    name: &str,
+    description: Option<String>,
+) -> Result<(), String> {
+    let registry_path = kicodex_core::registry::PersistedRegistry::default_path()
+        .ok_or_else(|| "Could not determine config directory".to_string())?;
+
+    let token = uuid::Uuid::new_v4().to_string();
+    let mut persisted = state.persisted.lock().unwrap();
+
+    persisted.upsert(kicodex_core::registry::ProjectEntry {
+        token: token.clone(),
+        project_path: None,
+        library_path: library_path.to_string(),
+        name: name.to_string(),
+        description,
+    });
+
+    persisted.save(&registry_path).map_err(|e| e.to_string())?;
+
+    // Try to load into runtime registry (non-fatal if library is empty/invalid)
+    let lib_path = PathBuf::from(library_path);
+    if let Ok(library) = kicodex_core::server::load_library(&lib_path) {
+        state.registry.insert(&token, library);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn register_standalone_library(
+    state: State<'_, AppState>,
+    library_path: String,
+) -> Result<String, String> {
+    let lib_dir = PathBuf::from(&library_path);
+    if !lib_dir.join("library.yaml").exists() {
+        return Err(format!(
+            "No library.yaml found at {}",
+            lib_dir.display()
+        ));
+    }
+
+    let manifest = kicodex_core::data::library::load_library_manifest(&lib_dir)
+        .map_err(|e| e.to_string())?;
+
+    // Check if already registered as standalone
+    {
+        let persisted = state.persisted.lock().unwrap();
+        if persisted
+            .projects
+            .iter()
+            .any(|p| p.project_path.is_none() && p.library_path == library_path)
+        {
+            return Ok(manifest.name);
+        }
+    }
+
+    let name = manifest.name.clone();
+    do_register_standalone(&state, &library_path, &name, manifest.description)?;
+
+    Ok(name)
+}
+
+#[tauri::command]
+pub fn remove_standalone_library(
+    state: State<'_, AppState>,
+    library_path: String,
+) -> Result<(), String> {
+    let registry_path = kicodex_core::registry::PersistedRegistry::default_path()
+        .ok_or_else(|| "Could not determine config directory".to_string())?;
+
+    let mut persisted = state.persisted.lock().unwrap();
+
+    // Find and remove from runtime registry
+    let tokens: Vec<String> = persisted
+        .projects
+        .iter()
+        .filter(|p| p.project_path.is_none() && p.library_path == library_path)
+        .map(|p| p.token.clone())
+        .collect();
+
+    for token in &tokens {
+        state.registry.remove(token);
+    }
+
+    persisted.remove_by_library_path(&library_path);
+    persisted.save(&registry_path).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_library_detail(library_path: String) -> Result<LibraryInfo, String> {
+    let clean_path = library_path
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&library_path)
+        .to_string();
+    let library_root = PathBuf::from(&clean_path);
+
+    let lib = kicodex_core::server::load_library(&library_root)
+        .map_err(|e| format!("Failed to load library at {}: {}", clean_path, e))?;
+
+    let manifest = kicodex_core::data::library::load_library_manifest(&library_root).ok();
+
+    let ct_files: std::collections::HashMap<String, String> = manifest
+        .as_ref()
+        .map(|m| {
+            m.part_tables
+                .iter()
+                .map(|t| (t.name.clone(), t.file.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let part_tables = lib
+        .part_tables
+        .iter()
+        .map(|ct| PartTableInfo {
+            name: ct.name.clone(),
+            template_name: ct.template_name.clone(),
+            component_count: ct.components.len(),
+            file: ct_files.get(&ct.name).cloned().unwrap_or_default(),
+        })
+        .collect();
+
+    Ok(LibraryInfo {
+        name: lib.name.clone(),
+        path: clean_path,
+        description: lib.description.clone(),
+        part_tables,
+    })
 }
 
 #[tauri::command]
@@ -1024,7 +1179,7 @@ pub fn get_discovered_projects(
     let registered_paths: HashSet<String> = persisted
         .projects
         .iter()
-        .map(|p| p.project_path.clone())
+        .filter_map(|p| p.project_path.clone())
         .collect();
 
     let mut discovered = Vec::new();
@@ -1057,7 +1212,7 @@ pub fn scan_project(
     let already_registered = persisted
         .projects
         .iter()
-        .any(|p| p.project_path == project_path);
+        .any(|p| p.project_path.as_deref() == Some(project_path.as_str()));
 
     let libraries = scan_for_libraries(project_path)?;
 
@@ -1108,7 +1263,7 @@ pub fn add_project(
 
         persisted.upsert(kicodex_core::registry::ProjectEntry {
             token: token.clone(),
-            project_path: project_dir.to_string_lossy().to_string(),
+            project_path: Some(project_dir.to_string_lossy().to_string()),
             library_path: library_path.to_string_lossy().to_string(),
             name: lib.name.clone(),
             description: description.clone(),

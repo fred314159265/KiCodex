@@ -93,9 +93,11 @@ impl DiscoveryEngine {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let lock_watcher = LockWatcher::new(event_tx);
 
-        // Watch directories from persisted registry
+        // Watch directories from persisted registry (only project-attached entries)
         for entry in &self.persisted.projects {
-            lock_watcher.add_directory(std::path::PathBuf::from(&entry.project_path));
+            if let Some(ref pp) = entry.project_path {
+                lock_watcher.add_directory(std::path::PathBuf::from(pp));
+            }
         }
         // Watch discovered directories
         for dir in &initial_dirs {
@@ -165,34 +167,40 @@ impl DiscoveryEngine {
 
     /// Remove registered projects whose kicodex.yaml or library.yaml no longer exists.
     fn cleanup_stale_registrations(&mut self) {
-        let stale_tokens: Vec<(String, String)> = self
+        let stale_tokens: Vec<String> = self
             .persisted
             .projects
             .iter()
             .filter(|entry| {
-                let project_dir = std::path::Path::new(&entry.project_path);
-                let library_dir = std::path::Path::new(&entry.library_path);
-                !project_dir.join("kicodex.yaml").exists()
-                    || !library_dir.join("library.yaml").exists()
+                // Only check project-attached entries for staleness
+                if let Some(ref pp) = entry.project_path {
+                    let project_dir = std::path::Path::new(pp);
+                    let library_dir = std::path::Path::new(&entry.library_path);
+                    !project_dir.join("kicodex.yaml").exists()
+                        || !library_dir.join("library.yaml").exists()
+                } else {
+                    // Standalone: only stale if library.yaml is gone
+                    let library_dir = std::path::Path::new(&entry.library_path);
+                    !library_dir.join("library.yaml").exists()
+                }
             })
-            .map(|entry| (entry.token.clone(), entry.project_path.clone()))
+            .map(|entry| entry.token.clone())
             .collect();
 
         if stale_tokens.is_empty() {
             return;
         }
 
-        for (token, project_path) in &stale_tokens {
+        for token in &stale_tokens {
             tracing::info!(
-                "Deregistering stale project '{}' (config or library removed)",
-                project_path
+                "Deregistering stale entry (config or library removed)"
             );
             self.registry.remove(token);
         }
 
         // Remove all stale entries from persisted registry
         let stale_token_set: std::collections::HashSet<&str> =
-            stale_tokens.iter().map(|(t, _)| t.as_str()).collect();
+            stale_tokens.iter().map(|t| t.as_str()).collect();
         self.persisted
             .projects
             .retain(|p| !stale_token_set.contains(p.token.as_str()));

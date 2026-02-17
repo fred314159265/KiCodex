@@ -1,4 +1,4 @@
-// Dashboard view — project-centric with discovered projects
+// Dashboard view — project-centric with discovered projects and standalone libraries
 const DashboardView = {
   async render(container, params) {
     const [projects, discovered] = await Promise.all([
@@ -13,14 +13,59 @@ const DashboardView = {
       h('h1', { className: 'page-title' }, 'Dashboard'),
       h('div', { className: 'btn-group' },
         h('button', { className: 'btn', onClick: () => promptAddProject() }, 'Add Project'),
+        h('button', { className: 'btn', onClick: () => promptOpenLibrary() }, 'Open Library'),
         h('button', { className: 'btn btn-primary', onClick: () => promptNewLibrary() }, 'New Library'),
       )
     );
     container.appendChild(header);
 
-    // Section 1: Your Projects (grouped by project_path)
+    // Partition: standalone libraries (project_path is null) vs project-attached
+    const standaloneEntries = projects.filter(p => !p.project_path);
+    const projectEntries = projects.filter(p => p.project_path);
+
+    // Section 1: Your Libraries (standalone)
+    if (standaloneEntries.length > 0) {
+      container.appendChild(h('h2', { className: 'section-title' }, 'Your Libraries'));
+      const grid = h('div', { className: 'card-grid' });
+
+      for (const lib of standaloneEntries) {
+        const removeBtn = h('button', {
+          className: 'btn-icon',
+          title: 'Remove library',
+          onClick: async (e) => {
+            e.stopPropagation();
+            const yes = await window.__TAURI__.dialog.confirm('Remove this library from KiCodex? (Files on disk will not be deleted)', { title: 'Remove Library', kind: 'warning' });
+            if (!yes) return;
+            try {
+              await invoke('remove_standalone_library', { libraryPath: lib.library_path });
+              renderRoute();
+            } catch (err) {
+              alert('Error: ' + err);
+            }
+          }
+        }, '\u00d7');
+
+        const card = h('div', { className: 'card', style: { cursor: 'pointer' } },
+          h('div', { className: 'card-header' },
+            h('span', { className: 'card-title' }, lib.name),
+            removeBtn,
+          ),
+          h('div', { className: 'card-subtitle' }, lib.library_path),
+          h('div', { style: { marginTop: '8px', fontSize: '13px', color: 'var(--text-muted)' } },
+            `${lib.part_table_count} part table${lib.part_table_count !== 1 ? 's' : ''}`
+          ),
+        );
+        card.addEventListener('click', () => {
+          navigate('library', { path: lib.library_path });
+        });
+        grid.appendChild(card);
+      }
+      container.appendChild(grid);
+    }
+
+    // Section 2: Your Projects (grouped by project_path)
     const grouped = {};
-    for (const p of projects) {
+    for (const p of projectEntries) {
       if (!grouped[p.project_path]) {
         grouped[p.project_path] = { libraries: [], active: p.active };
       }
@@ -77,7 +122,7 @@ const DashboardView = {
       container.appendChild(grid);
     }
 
-    // Section 2: Discovered Projects (open in KiCad, not registered)
+    // Section 3: Discovered Projects (open in KiCad, not registered)
     if (discovered.length > 0) {
       const section = h('div', { style: { marginTop: '24px' } });
       section.appendChild(h('h2', { className: 'section-title' }, 'Open in KiCad'));
@@ -109,9 +154,9 @@ const DashboardView = {
     }
 
     // Empty state
-    if (projectPaths.length === 0 && discovered.length === 0) {
+    if (standaloneEntries.length === 0 && projectPaths.length === 0 && discovered.length === 0) {
       container.appendChild(h('div', { className: 'empty' },
-        'No projects found. Open a project in KiCad or use "Add Project" to get started.'
+        'No projects or libraries found. Open a project in KiCad, use "Add Project", or "New Library" to get started.'
       ));
     }
   }
@@ -125,6 +170,25 @@ async function promptAddProject() {
     });
     if (selected) {
       navigate('add-project', { path: selected });
+    }
+  } catch (e) {
+    console.error('Failed to open folder picker:', e);
+  }
+}
+
+async function promptOpenLibrary() {
+  try {
+    const selected = await window.__TAURI__.dialog.open({
+      directory: true,
+      title: 'Select library directory (containing library.yaml)',
+    });
+    if (selected) {
+      try {
+        await invoke('register_standalone_library', { libraryPath: selected });
+        renderRoute();
+      } catch (e) {
+        alert('Error: ' + e);
+      }
     }
   } catch (e) {
     console.error('Failed to open folder picker:', e);
@@ -174,29 +238,7 @@ async function promptNewLibrary() {
       try {
         createBtn.disabled = true;
         createBtn.textContent = 'Creating...';
-        const libPath = await invoke('create_library', { name, parentDir: dirPath });
-
-        // Auto-register if the library is inside a registered project
-        try {
-          const projects = await invoke('get_projects');
-          const normalizedLibPath = libPath.replace(/\\/g, '/');
-          const matchingProject = projects.find(p => {
-            const normalizedProjPath = p.project_path.replace(/\\/g, '/');
-            return normalizedLibPath.startsWith(normalizedProjPath + '/');
-          });
-          if (matchingProject) {
-            const projPath = matchingProject.project_path;
-            const normalizedProjPath = projPath.replace(/\\/g, '/');
-            const relPath = normalizedLibPath.slice(normalizedProjPath.length + 1);
-            await invoke('add_project', {
-              projectPath: projPath,
-              libraries: [{ name, path: relPath, is_new: true }],
-            });
-          }
-        } catch (regErr) {
-          console.error('Auto-register failed:', regErr);
-        }
-
+        await invoke('create_library', { name, parentDir: dirPath });
         overlay.remove();
         renderRoute();
       } catch (e) {

@@ -1,12 +1,12 @@
 // Picker modal — two-column KiCad library/entry browser
 let _pickerCallback = null;
 
-function openPicker(kind, callback) {
+function openPicker(kind, callback, currentValue) {
   _pickerCallback = callback;
-  showPickerModal(kind);
+  showPickerModal(kind, currentValue);
 }
 
-async function showPickerModal(kind) {
+async function showPickerModal(kind, currentValue) {
   // Remove existing modal
   const existing = document.querySelector('.modal-overlay');
   if (existing) existing.remove();
@@ -115,5 +115,27 @@ async function showPickerModal(kind) {
   leftInput.addEventListener('input', () => renderLibraries(leftInput.value));
   rightInput.addEventListener('input', () => renderEntries(rightInput.value));
 
-  renderLibraries('');
+  // Pre-select library and entry if a current value like "Device:R" is provided
+  const preselect = currentValue ? currentValue.split(':') : null;
+  if (preselect && preselect.length === 2 && libraries.includes(preselect[0])) {
+    await selectLibrary(preselect[0]);
+    // Scroll to and highlight the matching entry
+    const targetEntry = preselect[1];
+    for (const item of rightList.children) {
+      if (item.textContent === targetEntry) {
+        item.classList.add('selected');
+        item.scrollIntoView({ block: 'nearest' });
+        break;
+      }
+    }
+    // Scroll the selected library into view
+    for (const item of leftList.children) {
+      if (item.textContent === preselect[0]) {
+        item.scrollIntoView({ block: 'nearest' });
+        break;
+      }
+    }
+  } else {
+    renderLibraries('');
+  }
 }

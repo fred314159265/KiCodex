@@ -25,7 +25,9 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(cargo check:*)",
-      "WebFetch(domain:docs.rs)"
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:bossanova.uk)",
+      "WebFetch(domain:jspreadsheet.com)"
     ]
   }
 }

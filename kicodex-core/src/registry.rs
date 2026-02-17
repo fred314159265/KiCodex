@@ -21,7 +21,8 @@ pub enum RegistryError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectEntry {
     pub token: String,
-    pub project_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
     pub library_path: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -60,18 +61,31 @@ impl PersistedRegistry {
         Ok(())
     }
 
-    /// Add or update a project entry. Removes any existing entry with the same
-    /// project_path or library_path to avoid stale duplicates.
+    /// Add or update a project entry. For standalone entries (project_path is None),
+    /// dedup by library_path alone. For project entries, dedup by project_path + library_path pair.
     pub fn upsert(&mut self, entry: ProjectEntry) {
         self.projects.retain(|p| {
-            !(p.project_path == entry.project_path && p.library_path == entry.library_path)
+            if entry.project_path.is_none() && p.project_path.is_none() {
+                // Standalone: dedup by library_path alone
+                p.library_path != entry.library_path
+            } else {
+                // Project-attached: dedup by project_path + library_path pair
+                !(p.project_path == entry.project_path && p.library_path == entry.library_path)
+            }
         });
         self.projects.push(entry);
     }
 
     /// Remove a project by its project path.
     pub fn remove_by_path(&mut self, project_path: &str) {
-        self.projects.retain(|p| p.project_path != project_path);
+        self.projects
+            .retain(|p| p.project_path.as_deref() != Some(project_path));
+    }
+
+    /// Remove a standalone library entry by its library path.
+    pub fn remove_by_library_path(&mut self, library_path: &str) {
+        self.projects
+            .retain(|p| !(p.project_path.is_none() && p.library_path == library_path));
     }
 
     /// Find a project entry by token.
@@ -163,7 +177,7 @@ mod tests {
         let mut registry = PersistedRegistry::default();
         registry.upsert(ProjectEntry {
             token: "abc123".to_string(),
-            project_path: "/home/user/project1".to_string(),
+            project_path: Some("/home/user/project1".to_string()),
             library_path: "/home/user/project1/libs/components".to_string(),
             name: "Project 1".to_string(),
             description: None,
@@ -181,14 +195,14 @@ mod tests {
         let mut registry = PersistedRegistry::default();
         registry.upsert(ProjectEntry {
             token: "token1".to_string(),
-            project_path: "/project".to_string(),
+            project_path: Some("/project".to_string()),
             library_path: "/project/libs".to_string(),
             name: "Project".to_string(),
             description: None,
         });
         registry.upsert(ProjectEntry {
             token: "token2".to_string(),
-            project_path: "/project".to_string(),
+            project_path: Some("/project".to_string()),
             library_path: "/project/libs".to_string(),
             name: "Project Updated".to_string(),
             description: None,
@@ -204,14 +218,14 @@ mod tests {
         let mut registry = PersistedRegistry::default();
         registry.upsert(ProjectEntry {
             token: "abc".to_string(),
-            project_path: "/p1".to_string(),
+            project_path: Some("/p1".to_string()),
             library_path: "/p1/libs".to_string(),
             name: "P1".to_string(),
             description: None,
         });
         registry.upsert(ProjectEntry {
             token: "def".to_string(),
-            project_path: "/p2".to_string(),
+            project_path: Some("/p2".to_string()),
             library_path: "/p2/libs".to_string(),
             name: "P2".to_string(),
             description: None,
@@ -227,13 +241,58 @@ mod tests {
         let mut registry = PersistedRegistry::default();
         registry.upsert(ProjectEntry {
             token: "abc".to_string(),
-            project_path: "/p1".to_string(),
+            project_path: Some("/p1".to_string()),
             library_path: "/p1/libs".to_string(),
             name: "P1".to_string(),
             description: None,
         });
         registry.remove_by_path("/p1");
         assert!(registry.projects.is_empty());
+    }
+
+    #[test]
+    fn test_standalone_upsert_dedup_by_library_path() {
+        let mut registry = PersistedRegistry::default();
+        registry.upsert(ProjectEntry {
+            token: "token1".to_string(),
+            project_path: None,
+            library_path: "/libs/my-lib".to_string(),
+            name: "My Lib".to_string(),
+            description: None,
+        });
+        registry.upsert(ProjectEntry {
+            token: "token2".to_string(),
+            project_path: None,
+            library_path: "/libs/my-lib".to_string(),
+            name: "My Lib Updated".to_string(),
+            description: None,
+        });
+
+        assert_eq!(registry.projects.len(), 1);
+        assert_eq!(registry.projects[0].token, "token2");
+    }
+
+    #[test]
+    fn test_remove_by_library_path() {
+        let mut registry = PersistedRegistry::default();
+        registry.upsert(ProjectEntry {
+            token: "standalone".to_string(),
+            project_path: None,
+            library_path: "/libs/my-lib".to_string(),
+            name: "My Lib".to_string(),
+            description: None,
+        });
+        registry.upsert(ProjectEntry {
+            token: "attached".to_string(),
+            project_path: Some("/project".to_string()),
+            library_path: "/libs/my-lib".to_string(),
+            name: "My Lib".to_string(),
+            description: None,
+        });
+        registry.remove_by_library_path("/libs/my-lib");
+        // Only standalone entry removed, project-attached entry remains
+        assert_eq!(registry.projects.len(), 1);
+        assert_eq!(registry.projects[0].token, "attached");
     }
 
     #[test]

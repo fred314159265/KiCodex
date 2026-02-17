@@ -65,7 +65,7 @@ const RowFormView = {
         const browseBtn = h('button', {
           type: 'button',
           className: 'btn',
-          onClick: () => openPicker(kind, (val) => { input.value = val; }),
+          onClick: () => openPicker(kind, (val) => { input.value = val; }, input.value),
         }, 'Browse');
         inputDiv.appendChild(input);
         inputDiv.appendChild(browseBtn);

@@ -95,7 +95,7 @@ pub fn try_auto_register(
         let existing = persisted
             .projects
             .iter()
-            .find(|p| p.project_path == project_path_str && p.name == lib_ref.name);
+            .find(|p| p.project_path.as_deref() == Some(project_path_str.as_str()) && p.name == lib_ref.name);
 
         if let Some(entry) = existing {
             // Already registered — just ensure the .kicad_httplib file is correct
@@ -134,7 +134,7 @@ pub fn try_auto_register(
 
         persisted.upsert(ProjectEntry {
             token: token.clone(),
-            project_path: project_path_str.clone(),
+            project_path: Some(project_path_str.clone()),
             library_path: library_path.to_string_lossy().to_string(),
             name: lib_ref.name.clone(),
             description: description.clone(),
@@ -268,7 +268,7 @@ tables:
         let mut persisted = PersistedRegistry::default();
         persisted.upsert(ProjectEntry {
             token: "existing-token".to_string(),
-            project_path: project_dir.to_string_lossy().to_string(),
+            project_path: Some(project_dir.to_string_lossy().to_string()),
             library_path: lib_dir.to_string_lossy().to_string(),
             name: "components".to_string(),
             description: None,
@@ -299,7 +299,7 @@ tables:
         let mut persisted = PersistedRegistry::default();
         persisted.upsert(ProjectEntry {
             token: "my-token".to_string(),
-            project_path: project_dir.to_string_lossy().to_string(),
+            project_path: Some(project_dir.to_string_lossy().to_string()),
             library_path: lib_dir.to_string_lossy().to_string(),
             name: "components".to_string(),
             description: None,
@@ -329,7 +329,7 @@ tables:
         let mut persisted = PersistedRegistry::default();
         persisted.upsert(ProjectEntry {
             token: "correct-token".to_string(),
-            project_path: project_dir.to_string_lossy().to_string(),
+            project_path: Some(project_dir.to_string_lossy().to_string()),
             library_path: lib_dir.to_string_lossy().to_string(),
             name: "components".to_string(),
             description: None,

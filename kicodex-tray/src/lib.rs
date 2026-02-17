@@ -40,7 +40,7 @@ fn resolve_active_projects(
             let name = persisted
                 .projects
                 .iter()
-                .find(|p| p.project_path == dir_str)
+                .find(|p| p.project_path.as_deref() == Some(dir_str.as_str()))
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| {
                     dir.file_name()
@@ -73,7 +73,7 @@ fn run_validation_summary(persisted: &PersistedRegistry) -> (usize, usize) {
             .unwrap_or(&entry.library_path)
             .to_string();
 
-        match commands::validate_library(lib_path, Some(entry.project_path.clone())) {
+        match commands::validate_library(lib_path, entry.project_path.clone()) {
             Ok(result) => {
                 total_errors += result.error_count;
                 total_warnings += result.warning_count;
@@ -122,6 +122,9 @@ pub fn run() {
             commands::scan_project,
             commands::add_project,
             commands::add_git_library,
+            commands::register_standalone_library,
+            commands::remove_standalone_library,
+            commands::get_library_detail,
         ])
         .setup(move |app| {
             // Init tracing

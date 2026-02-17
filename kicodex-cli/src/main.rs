@@ -278,7 +278,7 @@ fn run_init(project_dir: &std::path::Path, port: u16) -> anyhow::Result<()> {
 
         persisted.upsert(kicodex_core::registry::ProjectEntry {
             token: token.clone(),
-            project_path: project_dir.to_string_lossy().to_string(),
+            project_path: Some(project_dir.to_string_lossy().to_string()),
             library_path: library_path.to_string_lossy().to_string(),
             name: lib_ref.name.clone(),
             description: description.clone(),
@@ -406,10 +406,6 @@ fn run_new(
             println!("  - library.yaml");
             println!("  - templates/{}.yaml", ct_name);
             println!("  - {}.csv", ct_name);
-            println!(
-                "Add your parts to {}.csv, then run `kicodex scan` to generate kicodex.yaml",
-                ct_name
-            );
         } else {
             println!("Created library '{}' at {}/", name, lib_dir.display());
             println!("  - library.yaml");
@@ -429,6 +425,9 @@ fn run_new(
         };
         let yaml = serde_yml::to_string(&manifest)?;
         std::fs::write(&manifest_path, yaml)?;
+
+        // Auto-register as standalone library in persisted registry
+        register_standalone_library(&lib_dir, name)?;
     }
 
     Ok(())
@@ -956,27 +955,25 @@ fn run_list() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Group entries by project_path
+    // Separate standalone libraries from project-attached entries
+    let mut standalone: Vec<&kicodex_core::registry::ProjectEntry> = Vec::new();
     let mut by_project: std::collections::BTreeMap<&str, Vec<&kicodex_core::registry::ProjectEntry>> =
         std::collections::BTreeMap::new();
     for entry in &persisted.projects {
-        by_project
-            .entry(&entry.project_path)
-            .or_default()
-            .push(entry);
+        match &entry.project_path {
+            Some(pp) => by_project.entry(pp.as_str()).or_default().push(entry),
+            None => standalone.push(entry),
+        }
     }
 
-    println!("{} project(s) registered:\n", by_project.len());
-
-    for (project_path, entries) in &by_project {
-        println!("  {}", project_path);
-        for entry in entries {
+    if !standalone.is_empty() {
+        println!("Standalone Libraries:\n");
+        for entry in &standalone {
             let short_token = if entry.token.len() > 8 {
                 format!("{}...", &entry.token[..8])
             } else {
                 entry.token.clone()
             };
-            // Count part tables by loading the library
             let ct_count = match kicodex_core::server::load_library(std::path::Path::new(
                 &entry.library_path,
             )) {
@@ -984,17 +981,45 @@ fn run_list() -> anyhow::Result<()> {
                 Err(_) => "unable to load".to_string(),
             };
             println!(
-                "    {} [{}] (token: {})",
+                "  {} [{}] (token: {})",
                 entry.name, ct_count, short_token
             );
+            println!("    {}", entry.library_path);
         }
         println!();
+    }
+
+    if !by_project.is_empty() {
+        println!("{} project(s) registered:\n", by_project.len());
+
+        for (project_path, entries) in &by_project {
+            println!("  {}", project_path);
+            for entry in entries {
+                let short_token = if entry.token.len() > 8 {
+                    format!("{}...", &entry.token[..8])
+                } else {
+                    entry.token.clone()
+                };
+                let ct_count = match kicodex_core::server::load_library(std::path::Path::new(
+                    &entry.library_path,
+                )) {
+                    Ok(lib) => format!("{} part table(s)", lib.part_tables.len()),
+                    Err(_) => "unable to load".to_string(),
+                };
+                println!(
+                    "    {} [{}] (token: {})",
+                    entry.name, ct_count, short_token
+                );
+            }
+            println!();
+        }
     }
 
     Ok(())
 }
 
-/// Remove a project from the registry and delete its .kicad_httplib files.
+/// Remove a project or standalone library from the registry.
+/// If the path contains library.yaml (not kicodex.yaml), treats it as standalone library removal.
 fn run_remove(path: &std::path::Path) -> anyhow::Result<()> {
     let path = path
         .canonicalize()
@@ -1006,38 +1031,98 @@ fn run_remove(path: &std::path::Path) -> anyhow::Result<()> {
 
     let mut persisted = kicodex_core::registry::PersistedRegistry::load(&registry_path)?;
 
-    // Find matching entries before removing
-    let matching: Vec<_> = persisted
+    // Detect if this is a standalone library (has library.yaml but no kicodex.yaml)
+    let is_library = path.join("library.yaml").exists() && !path.join("kicodex.yaml").exists();
+
+    if is_library {
+        // Try standalone removal first
+        let standalone_match: Vec<_> = persisted
+            .projects
+            .iter()
+            .filter(|p| p.project_path.is_none() && p.library_path == path_str)
+            .cloned()
+            .collect();
+
+        if standalone_match.is_empty() {
+            println!("No standalone library registered at {}", path.display());
+            return Ok(());
+        }
+
+        persisted.remove_by_library_path(&path_str);
+        persisted.save(&registry_path)?;
+
+        println!(
+            "Removed standalone library at {}",
+            path.display()
+        );
+    } else {
+        // Project removal
+        let matching: Vec<_> = persisted
+            .projects
+            .iter()
+            .filter(|p| p.project_path.as_deref() == Some(path_str.as_str()))
+            .cloned()
+            .collect();
+
+        if matching.is_empty() {
+            println!("No registered project found at {}", path.display());
+            return Ok(());
+        }
+
+        // Delete .kicad_httplib files
+        for entry in &matching {
+            let httplib_path = path.join(format!("{}.kicad_httplib", entry.name));
+            if httplib_path.exists() {
+                std::fs::remove_file(&httplib_path)?;
+                println!("Deleted {}", httplib_path.display());
+            }
+        }
+
+        // Remove from registry
+        persisted.remove_by_path(&path_str);
+        persisted.save(&registry_path)?;
+
+        println!(
+            "Removed {} library/libraries for project at {}",
+            matching.len(),
+            path.display()
+        );
+    }
+
+    Ok(())
+}
+
+/// Register a library as standalone in the persisted registry.
+fn register_standalone_library(lib_dir: &std::path::Path, name: &str) -> anyhow::Result<()> {
+    let registry_path = kicodex_core::registry::PersistedRegistry::default_path()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
+
+    let mut persisted = kicodex_core::registry::PersistedRegistry::load(&registry_path)?;
+    let lib_path = lib_dir
+        .canonicalize()
+        .unwrap_or_else(|_| lib_dir.to_path_buf());
+    let lib_path_str = lib_path.to_string_lossy().to_string();
+
+    // Check if already registered
+    if persisted
         .projects
         .iter()
-        .filter(|p| p.project_path == path_str)
-        .cloned()
-        .collect();
-
-    if matching.is_empty() {
-        println!("No registered project found at {}", path.display());
+        .any(|p| p.project_path.is_none() && p.library_path == lib_path_str)
+    {
         return Ok(());
     }
 
-    // Delete .kicad_httplib files
-    for entry in &matching {
-        let httplib_path = path.join(format!("{}.kicad_httplib", entry.name));
-        if httplib_path.exists() {
-            std::fs::remove_file(&httplib_path)?;
-            println!("Deleted {}", httplib_path.display());
-        }
-    }
+    let token = uuid::Uuid::new_v4().to_string();
+    persisted.upsert(kicodex_core::registry::ProjectEntry {
+        token,
+        project_path: None,
+        library_path: lib_path_str,
+        name: name.to_string(),
+        description: Some(format!("KiCodex library: {}", name)),
+    });
 
-    // Remove from registry
-    persisted.remove_by_path(&path_str);
     persisted.save(&registry_path)?;
-
-    println!(
-        "Removed {} library/libraries for project at {}",
-        matching.len(),
-        path.display()
-    );
-
+    println!("Registered as standalone library");
     Ok(())
 }
 

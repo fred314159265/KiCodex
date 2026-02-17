@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
     pub name: String,
-    pub project_path: String,
+    pub project_path: Option<String>,
     pub library_path: String,
     pub active: bool,
     pub part_table_count: usize,

@@ -2,33 +2,50 @@
 const ValidateView = {
   async render(container, params) {
     const projectPath = params.project;
-    if (!projectPath) { navigate('dashboard'); return; }
+    const libParam = params.lib;
+
+    if (!projectPath && !libParam) { navigate('dashboard'); return; }
 
     container.innerHTML = '';
 
-    const bc = h('div', { className: 'breadcrumb' },
+    // Build breadcrumb based on context
+    const bcParts = [
       h('a', { href: '#dashboard' }, 'Dashboard'),
       h('span', {}, ' / '),
-      h('a', { href: `#project?path=${encodeURIComponent(projectPath)}` }, projectPath.split(/[\\/]/).pop()),
-      h('span', {}, ' / '),
-      h('span', {}, 'Validate'),
-    );
+    ];
+    if (projectPath) {
+      bcParts.push(h('a', { href: `#project?path=${encodeURIComponent(projectPath)}` }, projectPath.split(/[\\/]/).pop()));
+    } else {
+      const libName = libParam.split(/[\\/]/).pop() || libParam;
+      bcParts.push(h('a', { href: `#library?path=${encodeURIComponent(libParam)}` }, libName));
+    }
+    bcParts.push(h('span', {}, ' / '));
+    bcParts.push(h('span', {}, 'Validate'));
+    const bc = h('div', { className: 'breadcrumb' }, ...bcParts);
     container.appendChild(bc);
 
-    // Get the library path
-    const projects = await invoke('get_projects');
-    const entry = projects.find(p => p.project_path === projectPath);
-    if (!entry) {
-      container.appendChild(h('div', { className: 'empty' }, 'Project not found'));
-      return;
+    // Determine library path
+    let libPath;
+    if (libParam) {
+      // Standalone library — validate directly
+      libPath = libParam;
+    } else {
+      // Project-based — find the library from project entries
+      const projects = await invoke('get_projects');
+      const entry = projects.find(p => p.project_path === projectPath);
+      if (!entry) {
+        container.appendChild(h('div', { className: 'empty' }, 'Project not found'));
+        return;
+      }
+      libPath = entry.library_path;
     }
 
     container.appendChild(h('div', { className: 'loading' }, 'Validating...'));
 
     try {
       const result = await invoke('validate_library', {
-        libPath: entry.library_path,
-        projectPath,
+        libPath,
+        projectPath: projectPath || null,
       });
 
       // Clear loading

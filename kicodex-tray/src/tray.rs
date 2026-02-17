@@ -187,7 +187,7 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
                             let lib_path = persisted
                                 .projects
                                 .iter()
-                                .find(|p| p.project_path == project_path)
+                                .find(|p| p.project_path.as_deref() == Some(project_path.as_str()))
                                 .map(|p| p.library_path.clone());
                             drop(persisted);
                             drop(active);

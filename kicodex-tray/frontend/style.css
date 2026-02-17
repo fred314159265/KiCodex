@@ -483,7 +483,10 @@ body {
   color: var(--text-muted);
   opacity: 0;
   transition: opacity 0.15s;
+  -webkit-user-select: none;
+  user-select: none;
 }
+.cell-browse-btn::after { content: '...'; }
 td:hover .cell-browse-btn { opacity: 1; }
 
 /* Template editor validation */

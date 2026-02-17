@@ -5,7 +5,7 @@
 //! Library contents are loaded lazily on first lookup to avoid reading hundreds
 //! of files when only a few libraries are actually referenced.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -33,8 +33,8 @@ struct LibEntry {
 enum LibContent {
     /// URI resolved but not yet loaded.
     Pending(PathBuf),
-    /// Loaded successfully.
-    Loaded(Vec<String>),
+    /// Loaded successfully — Vec for ordered listing, HashSet for O(1) lookup.
+    Loaded(Vec<String>, HashSet<String>),
     /// Failed to load or resolve.
     Unreadable,
 }
@@ -166,8 +166,8 @@ fn lazy_lookup(
     let mut map = libs.lock().unwrap();
     match map.get(lib_name) {
         None => LibLookup::LibraryNotFound(lib_name.to_string()),
-        Some(LibContent::Loaded(entries)) => {
-            if entries.iter().any(|e| e == entry_name) {
+        Some(LibContent::Loaded(_, set)) => {
+            if set.contains(entry_name) {
                 LibLookup::Found
             } else {
                 LibLookup::EntryNotFound(lib_name.to_string(), entry_name.to_string())
@@ -181,12 +181,13 @@ fn lazy_lookup(
             };
             match loader(&path) {
                 Some(entries) => {
-                    let result = if entries.iter().any(|e| e == entry_name) {
+                    let set: HashSet<String> = entries.iter().cloned().collect();
+                    let result = if set.contains(entry_name) {
                         LibLookup::Found
                     } else {
                         LibLookup::EntryNotFound(lib_name.to_string(), entry_name.to_string())
                     };
-                    map.insert(lib_name.to_string(), LibContent::Loaded(entries));
+                    map.insert(lib_name.to_string(), LibContent::Loaded(entries, set));
                     result
                 }
                 None => {
@@ -207,7 +208,7 @@ fn list_entries(
     let mut map = libs.lock().unwrap();
     match map.get(lib_name) {
         None => None,
-        Some(LibContent::Loaded(entries)) => Some(entries.clone()),
+        Some(LibContent::Loaded(entries, _)) => Some(entries.clone()),
         Some(LibContent::Unreadable) => None,
         Some(LibContent::Pending(_)) => {
             let LibContent::Pending(path) = map.remove(lib_name).unwrap() else {
@@ -216,7 +217,8 @@ fn list_entries(
             match loader(&path) {
                 Some(entries) => {
                     let result = entries.clone();
-                    map.insert(lib_name.to_string(), LibContent::Loaded(entries));
+                    let set: HashSet<String> = entries.iter().cloned().collect();
+                    map.insert(lib_name.to_string(), LibContent::Loaded(entries, set));
                     Some(result)
                 }
                 None => {
@@ -347,58 +349,80 @@ fn extract_field(block: &str, field: &str) -> Option<String> {
 ///
 /// Looks for top-level `(symbol "Name" ...)` entries (depth 1 inside
 /// `kicad_symbol_lib`). Strips library prefix if present.
+///
+/// Uses a single-pass scan with incremental depth tracking (O(n)).
 fn extract_symbol_names(content: &str) -> Vec<String> {
     let mut names = Vec::new();
     let bytes = content.as_bytes();
-    let mut pos = 0;
+    let len = bytes.len();
+    let token = b"(symbol \"";
+    let token_len = token.len();
 
-    let token = "(symbol \"";
-    while pos < bytes.len() {
-        if let Some(idx) = find_token(content, pos, token) {
-            let depth = count_depth(content, idx);
-            if depth == 1 {
-                let name_start = idx + token.len();
-                if let Some(quote_end) = content[name_start..].find('"') {
-                    let raw_name = &content[name_start..name_start + quote_end];
+    let mut depth: i32 = 0;
+    let mut in_quote = false;
+    let mut escape = false;
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+
+        if escape {
+            escape = false;
+            i += 1;
+            continue;
+        }
+
+        if b == b'\\' && in_quote {
+            escape = true;
+            i += 1;
+            continue;
+        }
+
+        if b == b'"' {
+            in_quote = !in_quote;
+            i += 1;
+            continue;
+        }
+
+        if in_quote {
+            i += 1;
+            continue;
+        }
+
+        if b == b'(' {
+            // Check if this is `(symbol "` at depth 1 (about to become depth 1 after this open paren)
+            if depth == 1 && i + token_len <= len && &bytes[i..i + token_len] == token {
+                // Extract the name between the quotes
+                let name_start = i + token_len;
+                if let Some(rel_end) = bytes[name_start..].iter().position(|&c| c == b'"') {
+                    let raw_name = &content[name_start..name_start + rel_end];
                     // Strip library prefix (e.g., "Device:R" -> "R")
                     let name = match raw_name.split_once(':') {
                         Some((_, after)) => after.to_string(),
                         None => raw_name.to_string(),
                     };
                     names.push(name);
+                    // Skip past the closing quote
+                    i = name_start + rel_end + 1;
+                    depth += 1;
+                    continue;
                 }
             }
-            pos = idx + token.len();
-        } else {
-            break;
+            depth += 1;
+            i += 1;
+            continue;
         }
+
+        if b == b')' {
+            depth -= 1;
+            i += 1;
+            continue;
+        }
+
+        i += 1;
     }
 
     names
-}
-
-/// Count the paren nesting depth at a given position.
-fn count_depth(s: &str, target: usize) -> usize {
-    let mut depth = 0i32;
-    let mut in_quote = false;
-    let mut escape = false;
-    for (i, b) in s.bytes().enumerate() {
-        if i >= target {
-            break;
-        }
-        if escape {
-            escape = false;
-            continue;
-        }
-        match b {
-            b'\\' if in_quote => escape = true,
-            b'"' => in_quote = !in_quote,
-            b'(' if !in_quote => depth += 1,
-            b')' if !in_quote => depth -= 1,
-            _ => {}
-        }
-    }
-    depth as usize
 }
 
 // ---------------------------------------------------------------------------
@@ -666,9 +690,11 @@ mod tests {
     #[test]
     fn test_lookup_found() {
         let mut libs = HashMap::new();
+        let entries = vec!["R".to_string(), "C".to_string()];
+        let set: HashSet<String> = entries.iter().cloned().collect();
         libs.insert(
             "Device".to_string(),
-            LibContent::Loaded(vec!["R".to_string(), "C".to_string()]),
+            LibContent::Loaded(entries, set),
         );
         let libs = Mutex::new(libs);
 
@@ -678,9 +704,11 @@ mod tests {
     #[test]
     fn test_lookup_entry_not_found() {
         let mut libs = HashMap::new();
+        let entries = vec!["R".to_string()];
+        let set: HashSet<String> = entries.iter().cloned().collect();
         libs.insert(
             "Device".to_string(),
-            LibContent::Loaded(vec!["R".to_string()]),
+            LibContent::Loaded(entries, set),
         );
         let libs = Mutex::new(libs);
 
