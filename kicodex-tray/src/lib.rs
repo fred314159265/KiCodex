@@ -9,6 +9,7 @@ use kicodex_core::data::kicad_libs::KicadLibraries;
 use kicodex_core::discovery::DiscoveryEngine;
 use kicodex_core::registry::{PersistedRegistry, ProjectRegistry};
 use tauri::{Emitter, Manager};
+use tauri_plugin_autostart::ManagerExt;
 
 /// Shared application state accessible via `app.state()`.
 pub struct AppState {
@@ -180,6 +181,24 @@ pub fn run() {
                 }
             };
 
+            // Enable autostart by default on first launch
+            let autolaunch = app.autolaunch();
+            match autolaunch.is_enabled() {
+                Ok(false) => {
+                    if let Err(e) = autolaunch.enable() {
+                        tracing::warn!("Failed to enable autostart: {}", e);
+                    } else {
+                        tracing::info!("Autostart enabled");
+                    }
+                }
+                Ok(true) => {
+                    tracing::info!("Autostart already enabled");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to check autostart state: {}", e);
+                }
+            }
+
             // Build initial tray menu (no active projects yet until first scan)
             let tray = app.tray_by_id("main");
 
@@ -272,9 +291,12 @@ pub fn run() {
         .expect("error while building KiCodex tray application")
         .run(|_app, event| {
             // Prevent exit when the last window closes — this is a tray app.
-            // The user quits explicitly via the "Quit" tray menu item.
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                api.prevent_exit();
+            // Only block implicit exits (code == None, e.g. last window closed),
+            // not explicit app.exit() calls (code == Some).
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
             }
         });
 }

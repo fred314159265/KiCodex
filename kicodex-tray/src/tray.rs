@@ -1,6 +1,7 @@
-use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::tray::TrayIcon;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindowBuilder, WebviewUrl};
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::ActiveProject;
 use crate::AppState;
@@ -67,9 +68,19 @@ pub fn build_menu(
         }
     }
 
+    let autostart_enabled = app
+        .autolaunch()
+        .is_enabled()
+        .unwrap_or(false);
+
     builder = builder
         .item(&PredefinedMenuItem::separator(app)?)
         .item(&MenuItemBuilder::with_id("open-config", "Open Settings Folder").build(app)?)
+        .item(
+            &CheckMenuItemBuilder::with_id("autostart", "Start at Login")
+                .checked(autostart_enabled)
+                .build(app)?,
+        )
         .item(&PredefinedMenuItem::separator(app)?)
         .item(&MenuItemBuilder::with_id("quit", "Quit").build(app)?);
 
@@ -143,6 +154,26 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         }
         "open-dashboard" => {
             open_dashboard(app);
+        }
+        "autostart" => {
+            let autolaunch = app.autolaunch();
+            let currently_enabled = autolaunch.is_enabled().unwrap_or(false);
+            let result = if currently_enabled {
+                autolaunch.disable()
+            } else {
+                autolaunch.enable()
+            };
+            if let Err(e) = result {
+                tracing::error!("Failed to toggle autostart: {}", e);
+            }
+            // Rebuild menu to reflect new state
+            if let Some(tray) = app.tray_by_id("main") {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let active = state.active_projects.lock().unwrap().clone();
+                    let validation = *state.validation_summary.lock().unwrap();
+                    update_menu(app, &tray, &active, validation);
+                }
+            }
         }
         "open-config" => {
             if let Some(config_dir) = dirs::config_dir() {
