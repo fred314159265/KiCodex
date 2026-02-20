@@ -89,7 +89,7 @@ pub fn remove_library(
         .projects
         .iter()
         .find(|p| {
-            p.project_path.as_deref().map(clean) == Some(project_path.clone())
+            p.project_path.as_deref().map(|pp| clean(pp)) == Some(project_path.clone())
                 && clean(&p.library_path) == library_path
         })
         .cloned()
@@ -104,16 +104,63 @@ pub fn remove_library(
     let _ = std::fs::remove_file(&httplib_in_lib);
 
     // Delete .kicad_httplib from the project directory
-    if let Some(ref proj_path) = entry.project_path {
-        let proj_dir = PathBuf::from(proj_path);
-        let httplib_in_proj = proj_dir.join(format!("{}.kicad_httplib", entry.name));
-        let _ = std::fs::remove_file(&httplib_in_proj);
+    let project_dir = PathBuf::from(&project_path);
+    let httplib_in_proj = project_dir.join(format!("{}.kicad_httplib", entry.name));
+    let _ = std::fs::remove_file(&httplib_in_proj);
+
+    // Remove from kicodex.yaml
+    let config_path = project_dir.join("kicodex.yaml");
+    if config_path.exists() {
+        if let Ok(mut config) =
+            kicodex_core::data::project::load_project_config(&project_dir)
+        {
+            let target = clean(&entry.library_path);
+            config.libraries.retain(|lib_ref| {
+                let abs = project_dir.join(&lib_ref.path);
+                let canon = abs.canonicalize().unwrap_or(abs);
+                clean(&canon.to_string_lossy()) != target
+            });
+            let _ = kicodex_core::data::project::save_project_config(&project_dir, &config);
+        }
     }
 
-    // Remove from persisted registry and save (use raw paths for retain)
+    // Remove from persisted registry and save
     let token = entry.token.clone();
     persisted.projects.retain(|p| p.token != token);
     persisted.save(&registry_path).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_library(
+    state: State<'_, AppState>,
+    project_path: String,
+    library_path: String,
+) -> Result<(), String> {
+    // Resolve the absolute library path before removing registry entry
+    let clean = |s: &str| s.strip_prefix(r"\\?\").unwrap_or(s).to_string();
+
+    let abs_library_path = {
+        let persisted = state.persisted.lock().unwrap();
+        persisted
+            .projects
+            .iter()
+            .find(|p| {
+                p.project_path.as_deref().map(|pp| clean(pp)) == Some(project_path.clone())
+                    && clean(&p.library_path) == library_path
+            })
+            .map(|e| e.library_path.clone())
+            .ok_or_else(|| "Library not found in project".to_string())?
+    };
+
+    // Unlink from project (yaml + registry + httplib files)
+    remove_library(state, project_path, library_path)?;
+
+    // Delete the library folder from disk
+    let lib_dir = PathBuf::from(clean(&abs_library_path));
+    std::fs::remove_dir_all(&lib_dir)
+        .map_err(|e| format!("Failed to delete library folder: {}", e))?;
 
     Ok(())
 }
@@ -776,7 +823,7 @@ pub fn add_part_table(
         .map_err(|e| e.to_string())?;
     } else {
         // Default template (CLI compat)
-        let template_content = "fields:\n  value:\n    display_name: Name\n    visible: true\n    required: true\n  description:\n    display_name: Description\n    visible: true\n    required: true\n  footprint:\n    display_name: Footprint\n    visible: true\n    required: true\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: true\n    required: true\n    type: kicad_symbol\n";
+        let template_content = "fields:\n  value:\n    display_name: Value\n    visible: true\n    required: true\n  description:\n    display_name: Description\n    visible: true\n    required: true\n  footprint:\n    display_name: Footprint\n    visible: false\n    required: true\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: false\n    required: true\n    type: kicad_symbol\n  datasheet:\n    display_name: Datasheet\n    required: false\n    type: url\n";
         std::fs::write(
             templates_dir.join(format!("{}.yaml", component_type_name)),
             template_content,
@@ -785,7 +832,7 @@ pub fn add_part_table(
 
         std::fs::write(
             lib_dir.join(format!("{}.csv", component_type_name)),
-            "id,mpn,value,description,footprint,symbol\n",
+            "id,mpn,value,description,footprint,symbol,datasheet\n",
         )
         .map_err(|e| e.to_string())?;
     }

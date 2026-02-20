@@ -43,6 +43,7 @@ const ProjectView = {
         h('div', { className: 'btn-group' },
           h('button', { className: 'btn', onClick: () => doValidate(lib, projectPath) }, 'Validate'),
           h('button', { className: 'btn', onClick: () => doAddPartTable(lib, projectPath) }, 'Add Part Table'),
+          h('button', { className: 'btn btn-danger', onClick: () => doUnlinkLibrary(lib, projectPath) }, 'Unlink'),
           h('button', { className: 'btn btn-danger', onClick: () => doDeleteLibrary(lib, projectPath) }, 'Delete Library'),
         ),
       );
@@ -107,14 +108,28 @@ async function doRemoveProject(projectPath) {
   }
 }
 
-async function doDeleteLibrary(lib, projectPath) {
+async function doUnlinkLibrary(lib, projectPath) {
   const yes = await window.__TAURI__.dialog.confirm(
-    `Delete library "${lib.name}"? This will remove it from the project (the files on disk will not be deleted).`,
-    { title: 'Delete Library', kind: 'warning' },
+    `Remove library "${lib.name}" from this project? The library files will be kept on disk.`,
+    { title: 'Unlink Library', kind: 'warning' },
   );
   if (!yes) return;
   try {
     await invoke('remove_library', { projectPath, libraryPath: lib.path });
+    renderRoute();
+  } catch (e) {
+    alert('Error: ' + e);
+  }
+}
+
+async function doDeleteLibrary(lib, projectPath) {
+  const yes = await window.__TAURI__.dialog.confirm(
+    `Permanently delete library "${lib.name}"? This will remove it from the project AND delete all files on disk. This cannot be undone.`,
+    { title: 'Delete Library', kind: 'warning' },
+  );
+  if (!yes) return;
+  try {
+    await invoke('delete_library', { projectPath, libraryPath: lib.path });
     renderRoute();
   } catch (e) {
     alert('Error: ' + e);

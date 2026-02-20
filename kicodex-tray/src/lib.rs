@@ -100,6 +100,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::remove_project,
             commands::remove_library,
+            commands::delete_library,
             commands::get_projects,
             commands::get_project_libraries,
             commands::scan_for_libraries,

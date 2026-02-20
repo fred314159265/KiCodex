@@ -31,6 +31,14 @@ pub fn load_project_config(project_dir: &Path) -> Result<ProjectConfig, ProjectE
     Ok(config)
 }
 
+/// Save kicodex.yaml to the given project directory.
+pub fn save_project_config(project_dir: &Path, config: &ProjectConfig) -> Result<(), ProjectError> {
+    let config_path = project_dir.join("kicodex.yaml");
+    let yaml = serde_yml::to_string(config)?;
+    std::fs::write(&config_path, yaml)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
