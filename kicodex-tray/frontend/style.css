@@ -350,6 +350,14 @@ body {
   color: var(--text);
   font-size: 13px;
 }
+.picker-filter input.regex-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+}
+.picker-filter input.regex-error {
+  border-color: var(--error);
+  box-shadow: 0 0 0 2px rgba(220,38,38,0.15);
+}
 .picker-list {
   flex: 1;
   overflow-y: auto;

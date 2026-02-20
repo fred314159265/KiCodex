@@ -35,7 +35,7 @@ async function showPickerModal(kind, currentValue) {
   const leftCol = h('div', { className: 'picker-col' });
   leftCol.appendChild(h('div', { className: 'picker-col-header' }, 'Libraries'));
   const leftFilter = h('div', { className: 'picker-filter' });
-  const leftInput = h('input', { type: 'text', placeholder: 'Filter libraries...' });
+  const leftInput = h('input', { type: 'text', placeholder: 'Filter... (or /regex/)' });
   leftFilter.appendChild(leftInput);
   leftCol.appendChild(leftFilter);
   const leftList = h('div', { className: 'picker-list' });
@@ -45,7 +45,7 @@ async function showPickerModal(kind, currentValue) {
   const rightCol = h('div', { className: 'picker-col' });
   rightCol.appendChild(h('div', { className: 'picker-col-header' }, 'Entries'));
   const rightFilter = h('div', { className: 'picker-filter' });
-  const rightInput = h('input', { type: 'text', placeholder: 'Filter entries...' });
+  const rightInput = h('input', { type: 'text', placeholder: 'Filter... (or /regex/)' });
   rightFilter.appendChild(rightInput);
   rightCol.appendChild(rightFilter);
   const rightList = h('div', { className: 'picker-list' });
@@ -65,11 +65,32 @@ async function showPickerModal(kind, currentValue) {
   let selectedLib = null;
   let entries = [];
 
-  function renderLibraries(filter) {
+  function parseFilter(text) {
+    const raw = text || '';
+    const m = raw.match(/^\/(.*)\/([gimsuy]*)$/);
+    if (m) {
+      try {
+        const re = new RegExp(m[1], m[2]);
+        return { test: s => re.test(s), isRegex: true, isError: false };
+      } catch {
+        return { test: () => false, isRegex: true, isError: true };
+      }
+    }
+    const f = raw.toLowerCase();
+    return { test: s => !f || s.toLowerCase().includes(f), isRegex: false, isError: false };
+  }
+
+  function updateInputState(input, filter) {
+    input.classList.toggle('regex-active', filter.isRegex && !filter.isError);
+    input.classList.toggle('regex-error', filter.isError);
+  }
+
+  function renderLibraries(filterText) {
     leftList.innerHTML = '';
-    const f = (filter || '').toLowerCase();
+    const filter = parseFilter(filterText);
+    updateInputState(leftInput, filter);
     for (const lib of libraries) {
-      if (f && !lib.toLowerCase().includes(f)) continue;
+      if (!filter.test(lib)) continue;
       const item = h('div', {
         className: `picker-item ${lib === selectedLib ? 'selected' : ''}`,
         onClick: () => selectLibrary(lib),
@@ -90,11 +111,12 @@ async function showPickerModal(kind, currentValue) {
     }
   }
 
-  function renderEntries(filter) {
+  function renderEntries(filterText) {
     rightList.innerHTML = '';
-    const f = (filter || '').toLowerCase();
+    const filter = parseFilter(filterText);
+    updateInputState(rightInput, filter);
     for (const entry of entries) {
-      if (f && !entry.toLowerCase().includes(f)) continue;
+      if (!filter.test(entry)) continue;
       const item = h('div', {
         className: 'picker-item',
         onClick: () => {
