@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use thiserror::Error;
 use tracing::warn;
+use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum CsvError {
@@ -49,25 +50,19 @@ pub fn load_csv_with_ids(path: &Path) -> Result<Vec<CsvRow>, CsvError> {
         rows.push(row);
     }
 
-    // Find the next integer ID by scanning existing IDs
+    // Collect existing IDs to detect duplicates
     let mut used_ids: HashSet<String> = HashSet::new();
-    let mut max_int_id: u64 = 0;
     let mut needs_writeback = false;
 
     if has_id_column {
         for row in &rows {
             if let Some(id) = row.get("id") {
                 if !id.is_empty() {
-                    if let Ok(n) = id.parse::<u64>() {
-                        max_int_id = max_int_id.max(n);
-                    }
                     used_ids.insert(id.clone());
                 }
             }
         }
     }
-
-    let mut next_id = max_int_id + 1;
 
     // Assign IDs to rows that don't have one, or have duplicates
     let mut seen_ids: HashSet<String> = HashSet::new();
@@ -75,8 +70,7 @@ pub fn load_csv_with_ids(path: &Path) -> Result<Vec<CsvRow>, CsvError> {
         if !has_id_column {
             // Need to insert id as first column
             needs_writeback = true;
-            let id = next_id.to_string();
-            next_id += 1;
+            let id = Uuid::new_v4().to_string();
 
             // Rebuild row with id first
             let mut new_row = IndexMap::new();
@@ -92,13 +86,7 @@ pub fn load_csv_with_ids(path: &Path) -> Result<Vec<CsvRow>, CsvError> {
                 if !id.is_empty() {
                     warn!("duplicate id '{}' detected, assigning new id", id);
                 }
-                let new_id = loop {
-                    let candidate = next_id.to_string();
-                    next_id += 1;
-                    if !used_ids.contains(&candidate) {
-                        break candidate;
-                    }
-                };
+                let new_id = Uuid::new_v4().to_string();
                 used_ids.insert(new_id.clone());
                 row.insert("id".to_string(), new_id.clone());
                 seen_ids.insert(new_id);
@@ -155,16 +143,7 @@ pub fn write_csv(path: &Path, rows: &[CsvRow]) -> Result<(), CsvError> {
 pub fn append_row(path: &Path, fields: &CsvRow) -> Result<String, CsvError> {
     let mut rows = load_csv_with_ids(path)?;
 
-    // Find next integer ID
-    let mut max_id: u64 = 0;
-    for row in &rows {
-        if let Some(id) = row.get("id") {
-            if let Ok(n) = id.parse::<u64>() {
-                max_id = max_id.max(n);
-            }
-        }
-    }
-    let new_id = (max_id + 1).to_string();
+    let new_id = Uuid::new_v4().to_string();
 
     // Build new row with id first, then existing columns from first row as template
     let mut new_row = IndexMap::new();
@@ -337,11 +316,14 @@ mod tests {
         let rows = load_csv_with_ids(&csv_path).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["id"], "1");
-        assert_eq!(rows[1]["id"], "2"); // auto-assigned
+        // auto-assigned ID should be a non-empty UUID
+        let auto_id = &rows[1]["id"];
+        assert!(!auto_id.is_empty());
+        assert!(uuid::Uuid::parse_str(auto_id).is_ok(), "expected UUID, got {}", auto_id);
 
-        // Verify writeback
+        // Verify writeback contains the auto-assigned ID
         let content = fs::read_to_string(&csv_path).unwrap();
-        assert!(content.contains("2,RC0603FR-07100KL,100K"));
+        assert!(content.contains(&format!("{},RC0603FR-07100KL,100K", auto_id)));
     }
 
     #[test]
