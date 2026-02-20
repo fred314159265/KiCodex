@@ -249,7 +249,28 @@ const PartTableEditorView = {
       return true;
     }
 
+    function ensureRowIdsSync() {
+      const gridRows = ws.getData().length;
+      while (rowIds.length < gridRows) {
+        rowIds.push(null);
+      }
+      while (rowIds.length > gridRows) {
+        rowIds.pop();
+      }
+    }
+
+    function markUntrackedRowsAsDirty() {
+      for (let i = 0; i < rowIds.length; i++) {
+        if (!rowIds[i] && !isRowEmpty(i)) {
+          dirtyRows.add(i);
+        }
+      }
+    }
+
     async function saveAll() {
+      ensureRowIdsSync();
+      markUntrackedRowsAsDirty();
+
       // Remove dirty unsaved rows that are completely empty (e.g. trailing blank rows)
       const emptyNewRows = [];
       for (const rowIdx of dirtyRows) {
@@ -275,6 +296,8 @@ const PartTableEditorView = {
 
       saveBtn.textContent = 'Saving...';
       saveBtn.disabled = true;
+
+      ensureRowIdsSync();
 
       const sorted = [...dirtyRows]
         .filter(idx => idx >= 0 && idx < rowIds.length)
@@ -316,6 +339,11 @@ const PartTableEditorView = {
       if (emptyDiv) emptyDiv.remove();
 
       for (const rec of records) {
+        // Defensively extend rowIds if onafterchanges fires before oninsertrow
+        // has had a chance to grow rowIds for paste-created rows
+        while (rowIds.length <= rec.y) {
+          rowIds.push(null);
+        }
         dirtyRows.add(rec.y);
       }
       updateSaveButtonState();
