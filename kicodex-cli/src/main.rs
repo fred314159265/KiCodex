@@ -1127,11 +1127,11 @@ fn register_standalone_library(lib_dir: &std::path::Path, name: &str) -> anyhow:
 }
 
 fn schema_template() -> &'static str {
-    "fields:\n  value:\n    display_name: Value\n    visible: true\n  description:\n    display_name: Description\n    visible: true\n  footprint:\n    display_name: Footprint\n    visible: true\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: true\n    type: kicad_symbol\n"
+    "fields:\n  value:\n    display_name: Value\n    visible: true\n  description:\n    display_name: Description\n    visible: true\n  footprint:\n    display_name: Footprint\n    visible: false\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: false\n    type: kicad_symbol\n  datasheet:\n    display_name: Datasheet\n    required: false\n    type: url\n"
 }
 
 fn csv_template() -> &'static str {
-    "id,mpn,value,description,footprint,symbol\n"
+    "id,mpn,value,description,footprint,symbol,datasheet\n"
 }
 
 fn capitalize(s: &str) -> String {

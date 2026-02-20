@@ -25,7 +25,7 @@ pub async fn get_parts_by_category(
         .iter()
         .map(|row| {
             let id = row.get("id").cloned().unwrap_or_default();
-            let name = row.get("mpn").cloned().unwrap_or_default();
+            let name = row.get("mpn").or_else(|| row.get("value")).cloned().unwrap_or_default();
             let description = row.get("description").cloned().unwrap_or_default();
             PartSummary {
                 id,
@@ -108,7 +108,7 @@ fn bool_str(s: &str) -> String {
 
 fn build_part_detail(row: &IndexMap<String, String>, schema: &ResolvedSchema) -> PartDetail {
     let id = row.get("id").cloned().unwrap_or_default();
-    let name = row.get("mpn").cloned().unwrap_or_default();
+    let name = row.get("mpn").or_else(|| row.get("value")).cloned().unwrap_or_default();
     let symbol_id_str = row.get("symbol").cloned().unwrap_or_default();
 
     let mut fields = IndexMap::new();
