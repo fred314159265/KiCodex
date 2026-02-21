@@ -66,12 +66,7 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
     if schema_name == "_base" {
         let base =
             base.ok_or_else(|| SchemaError::MissingBase(schemas_dir.display().to_string()))?;
-        return Ok(ResolvedSchema {
-            exclude_from_bom: base.exclude_from_bom.unwrap_or(false),
-            exclude_from_board: base.exclude_from_board.unwrap_or(false),
-            exclude_from_sim: base.exclude_from_sim.unwrap_or(false),
-            fields: base.fields,
-        });
+        return Ok(resolve_raw_schema(base));
     }
 
     let schema_path = schemas_dir.join(format!("{schema_name}.yaml"));
@@ -90,12 +85,7 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
         let parent = if parent_name == "_base" {
             let base =
                 base.ok_or_else(|| SchemaError::MissingBase(schemas_dir.display().to_string()))?;
-            ResolvedSchema {
-                exclude_from_bom: base.exclude_from_bom.unwrap_or(false),
-                exclude_from_board: base.exclude_from_board.unwrap_or(false),
-                exclude_from_sim: base.exclude_from_sim.unwrap_or(false),
-                fields: base.fields,
-            }
+            resolve_raw_schema(base)
         } else {
             load_schema(schemas_dir, parent_name)?
         };
@@ -115,6 +105,15 @@ pub fn load_schema(schemas_dir: &Path, schema_name: &str) -> Result<ResolvedSche
         exclude_from_sim,
         fields,
     })
+}
+
+fn resolve_raw_schema(raw: RawSchema) -> ResolvedSchema {
+    ResolvedSchema {
+        exclude_from_bom: raw.exclude_from_bom.unwrap_or(false),
+        exclude_from_board: raw.exclude_from_board.unwrap_or(false),
+        exclude_from_sim: raw.exclude_from_sim.unwrap_or(false),
+        fields: raw.fields,
+    }
 }
 
 /// Write a raw schema to a YAML file in the schemas directory.

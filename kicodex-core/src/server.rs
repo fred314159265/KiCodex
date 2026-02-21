@@ -108,13 +108,7 @@ pub async fn run_server(library_root: &Path, port: u16, host: &str) -> Result<()
     registry.insert(&token, library);
 
     let app = build_router(Arc::new(registry));
-    let addr = format!("{host}:{port}");
-    tracing::info!("Starting KiCodex server on http://{addr}");
-
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
-
-    Ok(())
+    serve_on(app, host, port).await
 }
 
 /// Start the server with a pre-built registry (multi-project mode).
@@ -124,11 +118,13 @@ pub async fn run_server_with_registry(
     host: &str,
 ) -> Result<(), ServerError> {
     let app = build_router(registry);
+    serve_on(app, host, port).await
+}
+
+async fn serve_on(app: Router, host: &str, port: u16) -> Result<(), ServerError> {
     let addr = format!("{host}:{port}");
     tracing::info!("Starting KiCodex server on http://{addr}");
-
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
-
     Ok(())
 }

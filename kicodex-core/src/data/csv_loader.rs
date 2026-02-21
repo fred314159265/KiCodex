@@ -187,10 +187,7 @@ pub fn update_row(path: &Path, id: &str, fields: &CsvRow) -> Result<(), CsvError
             write_csv(path, &rows)?;
             Ok(())
         }
-        None => Err(CsvError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("row with id '{}' not found", id),
-        ))),
+        None => Err(row_not_found(id)),
     }
 }
 
@@ -247,6 +244,13 @@ pub fn remove_csv_columns(path: &Path, columns: &[String]) -> Result<(), CsvErro
     write_csv(path, &rows)
 }
 
+fn row_not_found(id: &str) -> CsvError {
+    CsvError::Io(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("row with id '{}' not found", id),
+    ))
+}
+
 // Aliases for component-based naming convention
 pub fn append_component(path: &Path, fields: &CsvRow) -> Result<String, CsvError> {
     append_row(path, fields)
@@ -267,10 +271,7 @@ pub fn delete_row(path: &Path, id: &str) -> Result<(), CsvError> {
     rows.retain(|r| r.get("id").map(|v| v.as_str()) != Some(id));
 
     if rows.len() == original_len {
-        return Err(CsvError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("row with id '{}' not found", id),
-        )));
+        return Err(row_not_found(id));
     }
 
     write_csv(path, &rows)?;

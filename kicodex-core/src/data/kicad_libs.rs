@@ -82,33 +82,8 @@ impl KicadLibraries {
         }
 
         // Resolve URIs but don't load contents yet
-        let mut symbol_libs: HashMap<String, LibContent> = HashMap::new();
-        for entry in &symbol_entries {
-            if symbol_libs.contains_key(&entry.name) {
-                continue;
-            }
-            let resolved = resolve_env_vars(&entry.uri);
-            let path = PathBuf::from(&resolved);
-            if path.exists() {
-                symbol_libs.insert(entry.name.clone(), LibContent::Pending(path));
-            } else {
-                symbol_libs.insert(entry.name.clone(), LibContent::Unreadable);
-            }
-        }
-
-        let mut footprint_libs: HashMap<String, LibContent> = HashMap::new();
-        for entry in &footprint_entries {
-            if footprint_libs.contains_key(&entry.name) {
-                continue;
-            }
-            let resolved = resolve_env_vars(&entry.uri);
-            let path = PathBuf::from(&resolved);
-            if path.exists() {
-                footprint_libs.insert(entry.name.clone(), LibContent::Pending(path));
-            } else {
-                footprint_libs.insert(entry.name.clone(), LibContent::Unreadable);
-            }
-        }
+        let symbol_libs = build_lib_map(&symbol_entries);
+        let footprint_libs = build_lib_map(&footprint_entries);
 
         Ok(KicadLibraries {
             symbol_libs: Mutex::new(symbol_libs),
@@ -128,18 +103,12 @@ impl KicadLibraries {
 
     /// List all symbol library names.
     pub fn list_symbol_libraries(&self) -> Vec<String> {
-        let map = self.symbol_libs.lock().unwrap();
-        let mut names: Vec<String> = map.keys().cloned().collect();
-        names.sort();
-        names
+        list_lib_names(&self.symbol_libs)
     }
 
     /// List all footprint library names.
     pub fn list_footprint_libraries(&self) -> Vec<String> {
-        let map = self.footprint_libs.lock().unwrap();
-        let mut names: Vec<String> = map.keys().cloned().collect();
-        names.sort();
-        names
+        list_lib_names(&self.footprint_libs)
     }
 
     /// List symbol entries in a library, forcing lazy load if needed.
@@ -150,6 +119,52 @@ impl KicadLibraries {
     /// List footprint entries in a library, forcing lazy load if needed.
     pub fn list_footprints(&self, lib_name: &str) -> Option<Vec<String>> {
         list_entries(&self.footprint_libs, lib_name, load_footprint_lib)
+    }
+}
+
+fn build_lib_map(entries: &[LibEntry]) -> HashMap<String, LibContent> {
+    let mut map = HashMap::new();
+    for entry in entries {
+        if map.contains_key(&entry.name) {
+            continue;
+        }
+        let resolved = resolve_env_vars(&entry.uri);
+        let path = PathBuf::from(&resolved);
+        if path.exists() {
+            map.insert(entry.name.clone(), LibContent::Pending(path));
+        } else {
+            map.insert(entry.name.clone(), LibContent::Unreadable);
+        }
+    }
+    map
+}
+
+fn list_lib_names(libs: &Mutex<HashMap<String, LibContent>>) -> Vec<String> {
+    let map = libs.lock().unwrap();
+    let mut names: Vec<String> = map.keys().cloned().collect();
+    names.sort();
+    names
+}
+
+/// Force-load a pending library into the cache and return its entries, or None on failure.
+fn force_load_pending(
+    map: &mut HashMap<String, LibContent>,
+    lib_name: &str,
+    loader: fn(&Path) -> Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    let LibContent::Pending(path) = map.remove(lib_name).unwrap() else {
+        unreachable!()
+    };
+    match loader(&path) {
+        Some(entries) => {
+            let set: HashSet<String> = entries.iter().cloned().collect();
+            map.insert(lib_name.to_string(), LibContent::Loaded(entries.clone(), set));
+            Some(entries)
+        }
+        None => {
+            map.insert(lib_name.to_string(), LibContent::Unreadable);
+            None
+        }
     }
 }
 
@@ -175,25 +190,16 @@ fn lazy_lookup(
         }
         Some(LibContent::Unreadable) => LibLookup::LibraryUnreadable(lib_name.to_string()),
         Some(LibContent::Pending(_)) => {
-            // Need to load — extract the path
-            let LibContent::Pending(path) = map.remove(lib_name).unwrap() else {
-                unreachable!()
-            };
-            match loader(&path) {
+            match force_load_pending(&mut map, lib_name, loader) {
                 Some(entries) => {
-                    let set: HashSet<String> = entries.iter().cloned().collect();
-                    let result = if set.contains(entry_name) {
+                    let set: HashSet<String> = entries.into_iter().collect();
+                    if set.contains(entry_name) {
                         LibLookup::Found
                     } else {
                         LibLookup::EntryNotFound(lib_name.to_string(), entry_name.to_string())
-                    };
-                    map.insert(lib_name.to_string(), LibContent::Loaded(entries, set));
-                    result
+                    }
                 }
-                None => {
-                    map.insert(lib_name.to_string(), LibContent::Unreadable);
-                    LibLookup::LibraryUnreadable(lib_name.to_string())
-                }
+                None => LibLookup::LibraryUnreadable(lib_name.to_string()),
             }
         }
     }
@@ -210,23 +216,7 @@ fn list_entries(
         None => None,
         Some(LibContent::Loaded(entries, _)) => Some(entries.clone()),
         Some(LibContent::Unreadable) => None,
-        Some(LibContent::Pending(_)) => {
-            let LibContent::Pending(path) = map.remove(lib_name).unwrap() else {
-                unreachable!()
-            };
-            match loader(&path) {
-                Some(entries) => {
-                    let result = entries.clone();
-                    let set: HashSet<String> = entries.iter().cloned().collect();
-                    map.insert(lib_name.to_string(), LibContent::Loaded(entries, set));
-                    Some(result)
-                }
-                None => {
-                    map.insert(lib_name.to_string(), LibContent::Unreadable);
-                    None
-                }
-            }
-        }
+        Some(LibContent::Pending(_)) => force_load_pending(&mut map, lib_name, loader),
     }
 }
 

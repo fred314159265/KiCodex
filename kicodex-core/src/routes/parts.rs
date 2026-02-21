@@ -106,6 +106,13 @@ fn bool_str(s: &str) -> String {
     }
 }
 
+fn exclude_flag(row: &IndexMap<String, String>, field: &str, schema_default: bool) -> String {
+    row.get(field)
+        .filter(|v| !v.is_empty())
+        .map(|v| bool_str(v))
+        .unwrap_or_else(|| bool_to_kicad(schema_default))
+}
+
 fn build_part_detail(row: &IndexMap<String, String>, schema: &ResolvedSchema) -> PartDetail {
     let id = row.get("id").cloned().unwrap_or_default();
     let name = row.get("mpn").or_else(|| row.get("value")).cloned().unwrap_or_default();
@@ -128,21 +135,9 @@ fn build_part_detail(row: &IndexMap<String, String>, schema: &ResolvedSchema) ->
     }
 
     // Exclude flags: CSV column overrides schema default, which defaults to false
-    let exclude_from_bom = row
-        .get("exclude_from_bom")
-        .filter(|v| !v.is_empty())
-        .map(|v| bool_str(v))
-        .unwrap_or_else(|| bool_to_kicad(schema.exclude_from_bom));
-    let exclude_from_board = row
-        .get("exclude_from_board")
-        .filter(|v| !v.is_empty())
-        .map(|v| bool_str(v))
-        .unwrap_or_else(|| bool_to_kicad(schema.exclude_from_board));
-    let exclude_from_sim = row
-        .get("exclude_from_sim")
-        .filter(|v| !v.is_empty())
-        .map(|v| bool_str(v))
-        .unwrap_or_else(|| bool_to_kicad(schema.exclude_from_sim));
+    let exclude_from_bom   = exclude_flag(row, "exclude_from_bom",   schema.exclude_from_bom);
+    let exclude_from_board = exclude_flag(row, "exclude_from_board",  schema.exclude_from_board);
+    let exclude_from_sim   = exclude_flag(row, "exclude_from_sim",    schema.exclude_from_sim);
 
     PartDetail {
         id,
