@@ -89,7 +89,7 @@ pub fn remove_library(
         .projects
         .iter()
         .find(|p| {
-            p.project_path.as_deref().map(|pp| clean(pp)) == Some(project_path.clone())
+            p.project_path.as_deref().map(clean) == Some(project_path.clone())
                 && clean(&p.library_path) == library_path
         })
         .cloned()
@@ -147,7 +147,7 @@ pub fn delete_library(
             .projects
             .iter()
             .find(|p| {
-                p.project_path.as_deref().map(|pp| clean(pp)) == Some(project_path.clone())
+                p.project_path.as_deref().map(clean) == Some(project_path.clone())
                     && clean(&p.library_path) == library_path
             })
             .map(|e| e.library_path.clone())
