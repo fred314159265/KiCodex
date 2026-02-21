@@ -109,7 +109,7 @@ const PartTableEditorView = {
         h('button', { className: 'btn', onClick: () => {
           navigate('component-form', { lib: libPath, type: componentTypeName, project: projectPath, mode: 'add' });
         }}, 'Add in Form'),
-        h('button', { className: 'btn btn-danger', onClick: () => {
+        h('button', { className: 'btn btn-danger', onMousedown: e => { e.preventDefault(); e.stopPropagation(); }, onClick: () => {
           deleteSelectedRows();
         }}, 'Delete Selected'),
         h('button', { className: 'btn', onClick: () => {
@@ -432,18 +432,39 @@ const PartTableEditorView = {
       updateTitle();
     }
 
-    function deleteSelectedRows() {
-      const selected = ws.getSelected(true);
-      if (!selected || selected.length === 0) return;
-      // Get unique row indices from selection
-      const rowSet = new Set();
-      for (const cell of selected) {
-        rowSet.add(cell[1]);
+    // window.confirm() is non-blocking in Tauri WebView2 — use an in-page modal instead
+    function showDeleteConfirm(message) {
+      return new Promise((resolve) => {
+        const overlay = h('div', { className: 'modal-overlay' },
+          h('div', { className: 'modal', style: { width: '400px' } },
+            h('div', { className: 'modal-header' }, h('h3', {}, 'Confirm Delete')),
+            h('div', { style: { padding: '16px', fontSize: '14px' } }, message),
+            h('div', { style: { padding: '12px 16px', display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: '1px solid var(--border)' } },
+              h('button', { className: 'btn', onClick: () => { overlay.remove(); resolve(false); } }, 'Cancel'),
+              h('button', { className: 'btn btn-danger', onClick: () => { overlay.remove(); resolve(true); } }, 'Delete'),
+            ),
+          ),
+        );
+        document.body.appendChild(overlay);
+      });
+    }
+
+    async function deleteSelectedRows() {
+      const selectedRows = ws.getSelectedRows();
+      if (!selectedRows || selectedRows.length === 0) return;
+      const sortedRows = [...selectedRows].sort((a, b) => b - a); // delete from bottom up
+
+      // Confirm before deleting any saved components
+      const savedIds = sortedRows.map(r => rowIds[r]).filter(Boolean);
+      if (savedIds.length > 0) {
+        const message = savedIds.length === 1
+          ? `Delete component ${savedIds[0]}?`
+          : `Delete ${savedIds.length} components: ${savedIds.join(', ')}?`;
+        const confirmed = await showDeleteConfirm(message);
+        if (!confirmed) return;
       }
-      const sortedRows = [...rowSet].sort((a, b) => b - a); // delete from bottom up
+
       for (const row of sortedRows) {
-        const id = rowIds[row];
-        if (id && !confirm(`Delete component ${id}?`)) continue;
         ws.deleteRow(row);
       }
     }
