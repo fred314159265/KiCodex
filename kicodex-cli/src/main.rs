@@ -351,11 +351,13 @@ fn run_new(
         let templates_dir = lib_dir.join(&manifest.templates_path);
         std::fs::create_dir_all(&templates_dir)?;
         let template_path = templates_dir.join(format!("{}.yaml", ct_name));
-        std::fs::write(&template_path, schema_template())?;
+        let schema = kicodex_core::data::schema::default_schema();
+        let schema_yaml = serde_yml::to_string(&schema)?;
+        std::fs::write(&template_path, schema_yaml)?;
 
         // Create CSV file
         let csv_path = lib_dir.join(format!("{}.csv", ct_name));
-        std::fs::write(&csv_path, csv_template())?;
+        std::fs::write(&csv_path, kicodex_core::data::schema::default_csv_headers())?;
 
         // Append part table to manifest
         manifest
@@ -390,11 +392,13 @@ fn run_new(
         if let Some(ct_name) = part_table {
             // Write template
             let template_path = templates_dir.join(format!("{}.yaml", ct_name));
-            std::fs::write(&template_path, schema_template())?;
+            let schema = kicodex_core::data::schema::default_schema();
+            let schema_yaml = serde_yml::to_string(&schema)?;
+            std::fs::write(&template_path, schema_yaml)?;
 
             // Write CSV
             let csv_path = lib_dir.join(format!("{}.csv", ct_name));
-            std::fs::write(&csv_path, csv_template())?;
+            std::fs::write(&csv_path, kicodex_core::data::schema::default_csv_headers())?;
 
             part_tables.push(kicodex_core::data::library::PartTableDef {
                 name: capitalize(ct_name),
@@ -1124,14 +1128,6 @@ fn register_standalone_library(lib_dir: &std::path::Path, name: &str) -> anyhow:
     persisted.save(&registry_path)?;
     println!("Registered as standalone library");
     Ok(())
-}
-
-fn schema_template() -> &'static str {
-    "fields:\n  value:\n    display_name: Value\n    visible: true\n  description:\n    display_name: Description\n    visible: true\n  footprint:\n    display_name: Footprint\n    visible: false\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: false\n    type: kicad_symbol\n  datasheet:\n    display_name: Datasheet\n    required: false\n    type: url\n"
-}
-
-fn csv_template() -> &'static str {
-    "id,mpn,value,description,footprint,symbol,datasheet\n"
 }
 
 fn capitalize(s: &str) -> String {

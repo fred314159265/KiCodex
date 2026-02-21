@@ -823,16 +823,13 @@ pub fn add_part_table(
         .map_err(|e| e.to_string())?;
     } else {
         // Default template (CLI compat)
-        let template_content = "fields:\n  value:\n    display_name: Value\n    visible: true\n    required: true\n  description:\n    display_name: Description\n    visible: true\n    required: true\n  footprint:\n    display_name: Footprint\n    visible: false\n    required: true\n    type: kicad_footprint\n  symbol:\n    display_name: Symbol\n    visible: false\n    required: true\n    type: kicad_symbol\n  datasheet:\n    display_name: Datasheet\n    required: false\n    type: url\n";
-        std::fs::write(
-            templates_dir.join(format!("{}.yaml", component_type_name)),
-            template_content,
-        )
-        .map_err(|e| e.to_string())?;
+        let schema = kicodex_core::data::schema::default_schema();
+        kicodex_core::data::schema::write_template(&templates_dir, &component_type_name, &schema)
+            .map_err(|e| e.to_string())?;
 
         std::fs::write(
             lib_dir.join(format!("{}.csv", component_type_name)),
-            "id,mpn,value,description,footprint,symbol,datasheet\n",
+            kicodex_core::data::schema::default_csv_headers(),
         )
         .map_err(|e| e.to_string())?;
     }

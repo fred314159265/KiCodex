@@ -143,6 +143,22 @@ pub fn write_template(schemas_dir: &Path, name: &str, schema: &RawSchema) -> Res
     write_schema(schemas_dir, name, schema)
 }
 
+/// Returns the default RawSchema used when scaffolding a new part table.
+pub fn default_schema() -> RawSchema {
+    let mut fields = IndexMap::new();
+    fields.insert("value".to_string(),       FieldDef { display_name: "Value".to_string(),       required: true,  visible: true,  description: None, field_type: None });
+    fields.insert("description".to_string(), FieldDef { display_name: "Description".to_string(), required: true,  visible: false, description: None, field_type: None });
+    fields.insert("footprint".to_string(),   FieldDef { display_name: "Footprint".to_string(),   required: true,  visible: false, description: None, field_type: Some("kicad_footprint".to_string()) });
+    fields.insert("symbol".to_string(),      FieldDef { display_name: "Symbol".to_string(),      required: true,  visible: false, description: None, field_type: Some("kicad_symbol".to_string()) });
+    fields.insert("datasheet".to_string(),   FieldDef { display_name: "Datasheet".to_string(),   required: false, visible: false, description: None, field_type: Some("url".to_string()) });
+    RawSchema { based_on: None, exclude_from_bom: None, exclude_from_board: None, exclude_from_sim: None, fields }
+}
+
+/// Returns the default CSV header row for a new part table (matches default_schema field order).
+pub fn default_csv_headers() -> &'static str {
+    "id,mpn,value,description,footprint,symbol,datasheet\n"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
