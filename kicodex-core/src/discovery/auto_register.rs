@@ -40,7 +40,9 @@ fn ensure_httplib_file(
     token: &str,
     port: u16,
 ) -> Result<(), std::io::Error> {
-    let httplib_path = project_dir.join(format!("{}.kicad_httplib", name));
+    let kicodex_dir = project_dir.join(".kicodex");
+    std::fs::create_dir_all(&kicodex_dir)?;
+    let httplib_path = kicodex_dir.join(format!("{}.kicad_httplib", name));
     let desc = resolve_description(name, description);
     let expected = expected_httplib_content(name, &desc, token, port);
 
@@ -256,7 +258,7 @@ tables:
         assert!(registry.tokens().len() == 1);
 
         // Check .kicad_httplib was written
-        let httplib = project_dir.join("components.kicad_httplib");
+        let httplib = project_dir.join(".kicodex").join("components.kicad_httplib");
         assert!(httplib.exists());
     }
 
@@ -308,7 +310,7 @@ tables:
         let registry = Arc::new(ProjectRegistry::new());
 
         // No .kicad_httplib file exists yet
-        let httplib = project_dir.join("components.kicad_httplib");
+        let httplib = project_dir.join(".kicodex").join("components.kicad_httplib");
         assert!(!httplib.exists());
 
         let count = try_auto_register(project_dir, &mut persisted, &registry, 18734).unwrap();
@@ -336,7 +338,9 @@ tables:
         });
 
         // Write a stale .kicad_httplib with wrong token
-        let httplib = project_dir.join("components.kicad_httplib");
+        let kicodex_dir = project_dir.join(".kicodex");
+        fs::create_dir_all(&kicodex_dir).unwrap();
+        let httplib = kicodex_dir.join("components.kicad_httplib");
         fs::write(&httplib, r#"{"source":{"token":"wrong-token"}}"#).unwrap();
 
         let registry = Arc::new(ProjectRegistry::new());

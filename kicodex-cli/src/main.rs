@@ -284,8 +284,10 @@ fn run_init(project_dir: &std::path::Path, port: u16) -> anyhow::Result<()> {
             description: description.clone(),
         });
 
-        // Write .kicad_httplib file in the project directory
-        let httplib_path = project_dir.join(format!("{}.kicad_httplib", lib_ref.name));
+        // Write .kicad_httplib file in the .kicodex/ subdirectory
+        let kicodex_dir = project_dir.join(".kicodex");
+        std::fs::create_dir_all(&kicodex_dir)?;
+        let httplib_path = kicodex_dir.join(format!("{}.kicad_httplib", lib_ref.name));
         let httplib_content = format!(
             r#"{{
     "meta": {{
