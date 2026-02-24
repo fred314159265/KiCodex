@@ -127,6 +127,9 @@ pub fn run() {
             commands::register_standalone_library,
             commands::remove_standalone_library,
             commands::get_library_detail,
+            commands::register_in_kicad_lib_table,
+            commands::get_kicad_lib_table_names,
+            commands::unregister_from_kicad_lib_table,
         ])
         .setup(move |app| {
             // Init tracing

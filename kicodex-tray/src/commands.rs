@@ -31,6 +31,51 @@ fn reload_registry_for_path(state: &AppState, lib_path: &std::path::Path) {
 }
 
 #[tauri::command]
+pub fn register_in_kicad_lib_table(
+    state: State<'_, AppState>,
+    project_path: String,
+    library_names: Vec<String>,
+) -> Result<usize, String> {
+    let project_dir = std::path::Path::new(&project_path);
+    let persisted = state.persisted.lock().unwrap();
+    let mut added = 0;
+
+    for name in &library_names {
+        // Look up description from persisted registry
+        let description = persisted
+            .projects
+            .iter()
+            .find(|p| p.project_path.as_deref() == Some(project_path.as_str()) && &p.name == name)
+            .and_then(|e| e.description.clone())
+            .unwrap_or_else(|| format!("KiCodex HTTP Library for {}", name));
+
+        match kicodex_core::data::kicad_libs::add_http_lib_entry(project_dir, name, &description) {
+            Ok(true) => added += 1,
+            Ok(false) => {}  // already registered
+            Err(e) => return Err(format!("Failed to update sym-lib-table: {}", e)),
+        }
+    }
+
+    Ok(added)
+}
+
+#[tauri::command]
+pub fn get_kicad_lib_table_names(project_path: String) -> Result<Vec<String>, String> {
+    let project_dir = std::path::Path::new(&project_path);
+    Ok(kicodex_core::data::kicad_libs::sym_lib_table_names(project_dir))
+}
+
+#[tauri::command]
+pub fn unregister_from_kicad_lib_table(
+    project_path: String,
+    library_name: String,
+) -> Result<bool, String> {
+    let project_dir = std::path::Path::new(&project_path);
+    kicodex_core::data::kicad_libs::remove_http_lib_entry(project_dir, &library_name)
+        .map_err(|e| format!("Failed to update sym-lib-table: {}", e))
+}
+
+#[tauri::command]
 pub fn remove_project(state: State<'_, AppState>, project_path: String) -> Result<usize, String> {
     let registry_path = kicodex_core::registry::PersistedRegistry::default_path()
         .ok_or_else(|| "Could not determine config directory".to_string())?;
@@ -565,8 +610,10 @@ pub fn init_project(
             description: description.clone(),
         });
 
-        // Write .kicad_httplib
-        let httplib_path = project_dir.join(format!("{}.kicad_httplib", lib_ref.name));
+        // Write .kicad_httplib in the .kicodex/ subdirectory
+        let kicodex_dir = project_dir.join(".kicodex");
+        std::fs::create_dir_all(&kicodex_dir).map_err(|e| e.to_string())?;
+        let httplib_path = kicodex_dir.join(format!("{}.kicad_httplib", lib_ref.name));
         let httplib_content = format!(
             r#"{{
     "meta": {{
@@ -1313,8 +1360,10 @@ pub fn add_project(
             description: description.clone(),
         });
 
-        // Write .kicad_httplib in the library directory (co-located)
-        let httplib_path = library_path.join(format!("{}.kicad_httplib", lib.name));
+        // Write .kicad_httplib in the .kicodex/ subdirectory of the project
+        let kicodex_dir = project_dir.join(".kicodex");
+        std::fs::create_dir_all(&kicodex_dir).map_err(|e| e.to_string())?;
+        let httplib_path = kicodex_dir.join(format!("{}.kicad_httplib", lib.name));
         let httplib_content = format!(
             r#"{{
     "meta": {{

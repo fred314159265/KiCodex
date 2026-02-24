@@ -5,6 +5,9 @@ const ProjectView = {
     if (!projectPath) { navigate('dashboard'); return; }
 
     const libraries = await invoke('get_project_libraries', { projectPath });
+    const registeredNames = new Set(
+      await invoke('get_kicad_lib_table_names', { projectPath }).catch(() => [])
+    );
 
     container.innerHTML = '';
 
@@ -35,17 +38,32 @@ const ProjectView = {
     for (const lib of libraries) {
       const section = h('div', { style: { marginBottom: '24px' } });
 
+      const btnGroup = h('div', { className: 'btn-group' });
+      btnGroup.appendChild(h('button', { className: 'btn', onClick: () => doValidate(lib, projectPath) }, 'Validate'));
+      btnGroup.appendChild(h('button', { className: 'btn', onClick: () => doAddPartTable(lib, projectPath) }, 'Add Part Table'));
+      if (!registeredNames.has(lib.name)) {
+        const regBtn = h('button', { className: 'btn' }, 'Register in KiCad');
+        regBtn.addEventListener('click', async () => {
+          regBtn.disabled = true;
+          try {
+            await invoke('register_in_kicad_lib_table', { projectPath, libraryNames: [lib.name] });
+            regBtn.remove();
+          } catch (e) {
+            regBtn.disabled = false;
+            alert('Error: ' + e);
+          }
+        });
+        btnGroup.appendChild(regBtn);
+      }
+      btnGroup.appendChild(h('button', { className: 'btn btn-danger', onClick: () => doUnlinkLibrary(lib, projectPath) }, 'Unlink'));
+      btnGroup.appendChild(h('button', { className: 'btn btn-danger', onClick: () => doDeleteLibrary(lib, projectPath) }, 'Delete Library'));
+
       const header = h('div', { className: 'page-header' },
         h('div', {},
           h('h2', { className: 'page-title' }, lib.name),
           lib.description ? h('div', { className: 'card-subtitle' }, lib.description) : null,
         ),
-        h('div', { className: 'btn-group' },
-          h('button', { className: 'btn', onClick: () => doValidate(lib, projectPath) }, 'Validate'),
-          h('button', { className: 'btn', onClick: () => doAddPartTable(lib, projectPath) }, 'Add Part Table'),
-          h('button', { className: 'btn btn-danger', onClick: () => doUnlinkLibrary(lib, projectPath) }, 'Unlink'),
-          h('button', { className: 'btn btn-danger', onClick: () => doDeleteLibrary(lib, projectPath) }, 'Delete Library'),
-        ),
+        btnGroup,
       );
       section.appendChild(header);
 
@@ -114,8 +132,21 @@ async function doUnlinkLibrary(lib, projectPath) {
     { title: 'Unlink Library', kind: 'warning' },
   );
   if (!yes) return;
+
+  const registeredNames = await invoke('get_kicad_lib_table_names', { projectPath }).catch(() => []);
+  let removeFromLibTable = false;
+  if (registeredNames.includes(lib.name)) {
+    removeFromLibTable = await window.__TAURI__.dialog.confirm(
+      `Also remove "${lib.name}" from KiCad's sym-lib-table?`,
+      { title: 'Update sym-lib-table', kind: 'info' },
+    );
+  }
+
   try {
     await invoke('remove_library', { projectPath, libraryPath: lib.path });
+    if (removeFromLibTable) {
+      await invoke('unregister_from_kicad_lib_table', { projectPath, libraryName: lib.name });
+    }
     renderRoute();
   } catch (e) {
     alert('Error: ' + e);
@@ -173,8 +204,32 @@ async function doNewLibrary(projectPath) {
           projectPath,
           libraries: [{ name, path: name, is_new: true }],
         });
-        overlay.remove();
-        renderRoute();
+        // Show success state with Register option
+        const registeredNames = await invoke('get_kicad_lib_table_names', { projectPath }).catch(() => []);
+        body.innerHTML = '';
+        body.appendChild(h('div', { style: { fontSize: '13px', color: 'var(--success)', marginBottom: '8px' } },
+          `Library "${name}" created.`));
+        if (!registeredNames.includes(name)) {
+          const feedbackDiv = h('div', { style: { fontSize: '12px', minHeight: '16px' } });
+          const regBtn = h('button', { className: 'btn btn-sm' }, 'Register in KiCad sym-lib-table');
+          regBtn.addEventListener('click', async () => {
+            regBtn.disabled = true;
+            try {
+              await invoke('register_in_kicad_lib_table', { projectPath, libraryNames: [name] });
+              feedbackDiv.style.color = 'var(--success)';
+              feedbackDiv.textContent = 'Registered in sym-lib-table.';
+              regBtn.style.display = 'none';
+            } catch (e) {
+              regBtn.disabled = false;
+              feedbackDiv.style.color = 'var(--error)';
+              feedbackDiv.textContent = String(e);
+            }
+          });
+          body.appendChild(regBtn);
+          body.appendChild(feedbackDiv);
+        }
+        const closeBtn = h('button', { className: 'btn btn-primary', onClick: () => { overlay.remove(); renderRoute(); } }, 'Done');
+        body.appendChild(h('div', { className: 'btn-group', style: { marginTop: '8px' } }, closeBtn));
       } catch (e) {
         errorDiv.textContent = String(e);
         createBtn.disabled = false;
@@ -191,7 +246,7 @@ async function doNewLibrary(projectPath) {
     h('h3', {}, 'New Library'),
     h('button', { className: 'modal-close', onClick: () => overlay.remove() }, '\u00d7'),
   ));
-  modal.appendChild(h('div', { style: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
+  const body = h('div', { style: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
     h('div', { className: 'form-group' },
       h('label', { className: 'form-label' }, 'Library Name'),
       nameInput,
@@ -201,7 +256,8 @@ async function doNewLibrary(projectPath) {
       'Will be created in: ' + projectPath,
     ),
     h('div', { className: 'btn-group' }, createBtn),
-  ));
+  );
+  modal.appendChild(body);
 
   overlay.appendChild(modal);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -292,8 +348,37 @@ async function doScanForLibraries(projectPath) {
           confirmBtn.disabled = true;
           confirmBtn.textContent = 'Adding...';
           await invoke('add_project', { projectPath, libraries: selected });
-          overlay.remove();
-          renderRoute();
+          // Show registration option
+          const names = selected.map(l => l.name);
+          const registeredNames = new Set(
+            await invoke('get_kicad_lib_table_names', { projectPath }).catch(() => [])
+          );
+          const unregisteredNames = names.filter(n => !registeredNames.has(n));
+          const closeBtn = h('button', { className: 'btn btn-primary', onClick: () => { overlay.remove(); renderRoute(); } }, 'Done');
+          confirmBtn.style.display = 'none';
+          const addedCount = selected.length;
+          modalBody.appendChild(h('div', { style: { fontSize: '13px', color: 'var(--success)' } },
+            `Added ${addedCount} ${addedCount === 1 ? 'library' : 'libraries'}.`));
+          if (unregisteredNames.length > 0) {
+            const feedbackDiv = h('div', { style: { fontSize: '12px', minHeight: '16px' } });
+            const regBtn = h('button', { className: 'btn btn-sm' }, 'Register in KiCad sym-lib-table');
+            regBtn.addEventListener('click', async () => {
+              regBtn.disabled = true;
+              try {
+                const count = await invoke('register_in_kicad_lib_table', { projectPath, libraryNames: unregisteredNames });
+                feedbackDiv.style.color = 'var(--success)';
+                feedbackDiv.textContent = `Registered ${count} ${count === 1 ? 'library' : 'libraries'} in sym-lib-table.`;
+                regBtn.style.display = 'none';
+              } catch (e) {
+                regBtn.disabled = false;
+                feedbackDiv.style.color = 'var(--error)';
+                feedbackDiv.textContent = String(e);
+              }
+            });
+            modalBody.appendChild(regBtn);
+            modalBody.appendChild(feedbackDiv);
+          }
+          modalBody.appendChild(h('div', { className: 'btn-group' }, closeBtn));
         } catch (e) {
           alert('Error: ' + e);
           confirmBtn.disabled = false;
@@ -306,10 +391,11 @@ async function doScanForLibraries(projectPath) {
       h('h3', {}, `Found ${newLibs.length} new ${newLibs.length === 1 ? 'library' : 'libraries'}`),
       h('button', { className: 'modal-close', onClick: () => overlay.remove() }, '\u00d7'),
     ));
-    modal.appendChild(h('div', { style: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
+    const modalBody = h('div', { style: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
       listDiv,
       h('div', { className: 'btn-group' }, confirmBtn),
-    ));
+    );
+    modal.appendChild(modalBody);
 
     overlay.appendChild(modal);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });

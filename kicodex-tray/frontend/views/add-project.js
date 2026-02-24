@@ -55,7 +55,7 @@ async function wizardScan(content, projectPath) {
           projectPath,
           libraries: result.libraries.map(l => ({ ...l, is_new: true })),
         });
-        wizardSuccess(content, projectPath, addResult);
+        await wizardSuccess(content, projectPath, addResult);
       } catch (e) {
         content.innerHTML = '';
         content.appendChild(h('div', { className: 'card', style: { color: 'var(--error)' } },
@@ -139,7 +139,7 @@ function wizardSelectLibraries(content, projectPath, libraries) {
 
       try {
         const result = await invoke('add_project', { projectPath, libraries: selected });
-        wizardSuccess(content, projectPath, result);
+        await wizardSuccess(content, projectPath, result);
       } catch (e) {
         addBtn.disabled = false;
         addBtn.textContent = 'Add Selected';
@@ -238,7 +238,7 @@ function wizardCreateLibrary(content, projectPath) {
 
       const libraries = [{ name, path: relPath, is_new: true }];
       const result = await invoke('add_project', { projectPath, libraries });
-      wizardSuccess(content, projectPath, result);
+      await wizardSuccess(content, projectPath, result);
     } catch (e) {
       errorDiv.textContent = String(e);
       createBtn.disabled = false;
@@ -312,7 +312,7 @@ function wizardAddExisting(content, projectPath) {
       const name = libDir.split(/[\\/]/).pop() || 'library';
       const libraries = [{ name, path: libPath, is_new: true }];
       const result = await invoke('add_project', { projectPath, libraries });
-      wizardSuccess(content, projectPath, result);
+      await wizardSuccess(content, projectPath, result);
     } catch (e) {
       errorDiv.textContent = String(e);
       addBtn.disabled = false;
@@ -388,7 +388,7 @@ function wizardAddGit(content, projectPath) {
 
       const libraries = [{ name, path: relPath, is_new: true }];
       const result = await invoke('add_project', { projectPath, libraries });
-      wizardSuccess(content, projectPath, result);
+      await wizardSuccess(content, projectPath, result);
     } catch (e) {
       errorDiv.textContent = String(e);
       cloneBtn.disabled = false;
@@ -418,7 +418,7 @@ function wizardAddGit(content, projectPath) {
   ));
 }
 
-function wizardSuccess(content, projectPath, result) {
+async function wizardSuccess(content, projectPath, result) {
   content.innerHTML = '';
 
   const card = h('div', { className: 'card' });
@@ -438,6 +438,35 @@ function wizardSuccess(content, projectPath, result) {
       pathList.appendChild(h('div', { style: { marginBottom: '4px' } }, p));
     }
     card.appendChild(pathList);
+
+    const allNames = result.httplib_paths.map(p => p.split(/[\\/]/).pop().replace('.kicad_httplib', ''));
+    const registeredNames = new Set(
+      await invoke('get_kicad_lib_table_names', { projectPath }).catch(() => [])
+    );
+    const unregisteredNames = allNames.filter(n => !registeredNames.has(n));
+
+    if (unregisteredNames.length > 0) {
+      const statusDiv = h('div', { style: { fontSize: '13px', marginTop: '6px', minHeight: '18px' } });
+      const regBtn = h('button', { className: 'btn btn-sm', style: { marginTop: '8px' } },
+        'Register in KiCad sym-lib-table');
+      regBtn.addEventListener('click', async () => {
+        regBtn.disabled = true;
+        regBtn.textContent = 'Registering\u2026';
+        try {
+          const count = await invoke('register_in_kicad_lib_table', { projectPath, libraryNames: unregisteredNames });
+          statusDiv.style.color = 'var(--success)';
+          statusDiv.textContent = `Added ${count} entr${count === 1 ? 'y' : 'ies'} to sym-lib-table.`;
+          regBtn.style.display = 'none';
+        } catch (e) {
+          regBtn.disabled = false;
+          regBtn.textContent = 'Register in KiCad sym-lib-table';
+          statusDiv.style.color = 'var(--error)';
+          statusDiv.textContent = String(e);
+        }
+      });
+      card.appendChild(regBtn);
+      card.appendChild(statusDiv);
+    }
   }
 
   card.appendChild(h('div', { className: 'btn-group', style: { marginTop: '16px' } },

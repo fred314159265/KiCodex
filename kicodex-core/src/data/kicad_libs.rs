@@ -590,6 +590,95 @@ fn global_kicad_config_dir() -> Option<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
+// sym-lib-table writer
+// ---------------------------------------------------------------------------
+
+/// Add an HTTP library entry to the project-local `sym-lib-table`.
+///
+/// Creates the file if it doesn't exist. If a `(lib (name "..."))` entry with
+/// the same name already exists the file is left unchanged and `false` is returned.
+/// Returns `true` when a new entry is written.
+pub fn add_http_lib_entry(
+    project_dir: &Path,
+    name: &str,
+    description: &str,
+) -> Result<bool, std::io::Error> {
+    let table_path = project_dir.join("sym-lib-table");
+    let uri = format!("${{KIPRJMOD}}/.kicodex/{}.kicad_httplib", name);
+    let entry = format!(
+        "  (lib (name \"{name}\")(type \"KiCad HTTP Library\")\
+         (uri \"{uri}\")(options \"\")(descr \"{description}\"))"
+    );
+
+    if table_path.exists() {
+        let existing = std::fs::read_to_string(&table_path)?;
+        // Skip if already registered
+        if existing.contains(&format!("(name \"{}\")", name)) {
+            return Ok(false);
+        }
+        // Insert before the closing paren
+        let updated = if let Some(pos) = existing.rfind(')') {
+            format!("{}\n{})", &existing[..pos], entry)
+        } else {
+            format!("(sym_lib_table\n{})\n", entry)
+        };
+        std::fs::write(&table_path, updated)?;
+    } else {
+        std::fs::write(&table_path, format!("(sym_lib_table\n{})\n", entry))?;
+    }
+    Ok(true)
+}
+
+/// Remove a library entry by name from the project-local `sym-lib-table`.
+///
+/// Returns `true` if the entry was found and removed, `false` if it was not present.
+/// Returns an error only on I/O failure.
+pub fn remove_http_lib_entry(project_dir: &Path, name: &str) -> Result<bool, std::io::Error> {
+    let table_path = project_dir.join("sym-lib-table");
+    if !table_path.exists() {
+        return Ok(false);
+    }
+    let content = std::fs::read_to_string(&table_path)?;
+    let name_pattern = format!("(name \"{}\")", name);
+    if !content.contains(&name_pattern) {
+        return Ok(false);
+    }
+    let updated = remove_lib_block(&content, name);
+    std::fs::write(&table_path, updated)?;
+    Ok(true)
+}
+
+/// Remove the `(lib ...)` block matching `name`, along with its leading newline+whitespace.
+fn remove_lib_block(content: &str, name: &str) -> String {
+    let name_pattern = format!("(name \"{}\")", name);
+    let mut pos = 0;
+    while pos < content.len() {
+        let Some(lib_start) = find_token(content, pos, "(lib ") else { break };
+        let Some(close) = find_matching_paren(content, lib_start) else { break };
+        let block = &content[lib_start..=close];
+        if block.contains(&name_pattern) {
+            // Eat the newline + indentation that precede this block.
+            let cut_from = content[..lib_start].rfind('\n').unwrap_or(lib_start);
+            let mut updated = String::with_capacity(content.len());
+            updated.push_str(&content[..cut_from]);
+            updated.push_str(&content[close + 1..]);
+            return updated;
+        }
+        pos = close + 1;
+    }
+    content.to_string()
+}
+
+/// Return the library names already registered in the project-local `sym-lib-table`.
+/// Returns an empty vec if the file doesn't exist or can't be read.
+pub fn sym_lib_table_names(project_dir: &Path) -> Vec<String> {
+    let path = project_dir.join("sym-lib-table");
+    parse_lib_table_file(&path)
+        .map(|entries| entries.into_iter().map(|e| e.name).collect())
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -745,6 +834,99 @@ mod tests {
             Some("/path/to/lib.kicad_sym".to_string())
         );
         assert_eq!(extract_field(block, "missing"), None);
+    }
+
+    #[test]
+    fn test_add_http_lib_entry_creates_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = add_http_lib_entry(dir.path(), "MyLib", "My test library").unwrap();
+        assert!(result, "should return true when creating new file");
+        let content = std::fs::read_to_string(dir.path().join("sym-lib-table")).unwrap();
+        assert!(content.contains("(name \"MyLib\")"));
+        assert!(content.contains("KiCad HTTP Library"));
+        assert!(content.contains("MyLib.kicad_httplib"));
+    }
+
+    #[test]
+    fn test_add_http_lib_entry_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = add_http_lib_entry(dir.path(), "MyLib", "desc").unwrap();
+        assert!(first);
+        let second = add_http_lib_entry(dir.path(), "MyLib", "desc").unwrap();
+        assert!(!second, "second call should return false (already registered)");
+        // File should only have one entry
+        let content = std::fs::read_to_string(dir.path().join("sym-lib-table")).unwrap();
+        assert_eq!(content.matches("(name \"MyLib\")").count(), 1);
+    }
+
+    #[test]
+    fn test_add_http_lib_entry_appends_to_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let table_path = dir.path().join("sym-lib-table");
+        std::fs::write(
+            &table_path,
+            "(sym_lib_table\n  (lib (name \"Existing\")(type \"KiCad\")(uri \"path\")(options \"\")(descr \"\"))\n)\n",
+        ).unwrap();
+        let result = add_http_lib_entry(dir.path(), "NewLib", "new").unwrap();
+        assert!(result);
+        let content = std::fs::read_to_string(&table_path).unwrap();
+        assert!(content.contains("(name \"Existing\")"));
+        assert!(content.contains("(name \"NewLib\")"));
+    }
+
+    #[test]
+    fn test_sym_lib_table_names_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        add_http_lib_entry(dir.path(), "LibA", "desc a").unwrap();
+        add_http_lib_entry(dir.path(), "LibB", "desc b").unwrap();
+        let names = sym_lib_table_names(dir.path());
+        assert!(names.contains(&"LibA".to_string()));
+        assert!(names.contains(&"LibB".to_string()));
+    }
+
+    #[test]
+    fn test_sym_lib_table_names_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let names = sym_lib_table_names(dir.path());
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_remove_http_lib_entry_only_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        add_http_lib_entry(dir.path(), "LibA", "desc").unwrap();
+        let removed = remove_http_lib_entry(dir.path(), "LibA").unwrap();
+        assert!(removed);
+        let names = sym_lib_table_names(dir.path());
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_remove_http_lib_entry_leaves_others() {
+        let dir = tempfile::tempdir().unwrap();
+        add_http_lib_entry(dir.path(), "LibA", "desc a").unwrap();
+        add_http_lib_entry(dir.path(), "LibB", "desc b").unwrap();
+        let removed = remove_http_lib_entry(dir.path(), "LibA").unwrap();
+        assert!(removed);
+        let names = sym_lib_table_names(dir.path());
+        assert!(!names.contains(&"LibA".to_string()));
+        assert!(names.contains(&"LibB".to_string()));
+    }
+
+    #[test]
+    fn test_remove_http_lib_entry_not_present() {
+        let dir = tempfile::tempdir().unwrap();
+        add_http_lib_entry(dir.path(), "LibA", "desc").unwrap();
+        let removed = remove_http_lib_entry(dir.path(), "Missing").unwrap();
+        assert!(!removed);
+        assert_eq!(sym_lib_table_names(dir.path()), vec!["LibA".to_string()]);
+    }
+
+    #[test]
+    fn test_remove_http_lib_entry_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let removed = remove_http_lib_entry(dir.path(), "LibA").unwrap();
+        assert!(!removed);
     }
 
     #[test]
