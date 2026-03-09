@@ -36,8 +36,8 @@ async fn test_root_endpoint() {
         .await
         .unwrap();
 
-    assert_eq!(resp["categories"], "");
-    assert_eq!(resp["parts"], "");
+    assert_eq!(resp["categories"], "categories.json");
+    assert_eq!(resp["parts"], "parts/");
 }
 
 #[tokio::test]

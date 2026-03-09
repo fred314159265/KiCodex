@@ -74,6 +74,7 @@ pub struct ValidationPartTableResult {
 pub struct ValidationIssue {
     pub row: Option<usize>,
     pub id: Option<String>,
+    pub field: Option<String>,
     pub message: String,
 }
 

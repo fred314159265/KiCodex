@@ -120,6 +120,7 @@ pub fn run() {
             commands::list_kicad_libraries,
             commands::list_kicad_entries,
             commands::open_in_explorer,
+            commands::open_url,
             commands::get_discovered_projects,
             commands::scan_project,
             commands::add_project,
@@ -128,6 +129,7 @@ pub fn run() {
             commands::remove_standalone_library,
             commands::get_library_detail,
             commands::register_in_kicad_lib_table,
+            commands::is_project_active_in_kicad,
             commands::get_kicad_lib_table_names,
             commands::unregister_from_kicad_lib_table,
         ])
@@ -150,6 +152,9 @@ pub fn run() {
                 tracing::warn!("Failed to load registry: {}, starting fresh", e);
                 PersistedRegistry::default()
             });
+
+            // Ensure all .kicad_httplib files are in sync before anything else
+            kicodex_core::discovery::auto_register::ensure_all_httplib_files(&persisted, port);
 
             // Build runtime registry from persisted
             let registry = ProjectRegistry::from_persisted(&persisted).unwrap_or_else(|e| {

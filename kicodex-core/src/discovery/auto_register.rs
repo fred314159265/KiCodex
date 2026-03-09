@@ -31,9 +31,32 @@ fn resolve_description(name: &str, description: Option<&str>) -> String {
         .unwrap_or_else(|| format!("KiCodex HTTP Library for {name}"))
 }
 
+/// Ensure all `.kicad_httplib` files for project-attached entries are up to date.
+/// Called at app startup to heal any stale files.
+pub fn ensure_all_httplib_files(persisted: &PersistedRegistry, port: u16) {
+    for entry in &persisted.projects {
+        let project_path = match entry.project_path.as_deref() {
+            Some(pp) => std::path::Path::new(pp),
+            None => continue, // standalone — no httplib file
+        };
+        if !project_path.is_dir() {
+            continue; // stale entry, cleanup will handle it
+        }
+        if let Err(e) = ensure_httplib_file(
+            project_path,
+            &entry.name,
+            entry.description.as_deref(),
+            &entry.token,
+            port,
+        ) {
+            tracing::warn!("Failed to ensure .kicad_httplib for {}: {}", entry.name, e);
+        }
+    }
+}
+
 /// Ensure the `.kicad_httplib` file exists and has the correct token/port.
 /// Rewrites the file if it's missing, has a stale token, or wrong port.
-fn ensure_httplib_file(
+pub fn ensure_httplib_file(
     project_dir: &Path,
     name: &str,
     description: Option<&str>,
@@ -156,20 +179,6 @@ pub fn try_auto_register(
         .map_err(AutoRegisterError::Io)?;
 
         newly_registered += 1;
-    }
-
-    // Save persisted registry if we registered anything
-    if newly_registered > 0 {
-        if let Some(registry_path) = PersistedRegistry::default_path() {
-            persisted.save(&registry_path).map_err(|e| match e {
-                crate::registry::RegistryError::Io(io) => AutoRegisterError::Io(io),
-                other => AutoRegisterError::Registry(other.to_string()),
-            })?;
-            tracing::info!(
-                "Registry saved with {} new library/libraries",
-                newly_registered
-            );
-        }
     }
 
     Ok(newly_registered)

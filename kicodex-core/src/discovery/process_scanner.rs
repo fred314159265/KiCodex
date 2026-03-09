@@ -2,9 +2,18 @@ use std::path::PathBuf;
 
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
 
-/// Scan running processes for KiCad instances and extract `.kicad_pro` project paths.
+/// KiCad project-related file extensions whose parent directory is the project root.
+const KICAD_PROJECT_EXTENSIONS: &[&str] =
+    &[".kicad_pro", ".kicad_sch", ".kicad_pcb", ".kicad_dru"];
+
+/// Scan running processes for KiCad instances and extract project root directories.
 ///
-/// Returns a deduplicated list of project root directories (parent of the `.kicad_pro` file).
+/// Detects project directories from any KiCad-related process argument ending in a
+/// recognised KiCad file extension (`.kicad_pro`, `.kicad_sch`, `.kicad_pcb`, …).
+/// This covers the common case where KiCad's launcher has no argument but eeschema
+/// or pcbnew was opened with a file path.
+///
+/// Returns a deduplicated, sorted list of project root directories.
 pub fn scan_kicad_processes() -> Vec<PathBuf> {
     let mut system = System::new();
     system.refresh_processes_specifics(
@@ -17,7 +26,7 @@ pub fn scan_kicad_processes() -> Vec<PathBuf> {
 
     for process in system.processes().values() {
         let name = process.name().to_string_lossy().to_lowercase();
-        if !name.contains("kicad") {
+        if !name.contains("kicad") && !name.contains("eeschema") && !name.contains("pcbnew") {
             continue;
         }
 
@@ -32,9 +41,12 @@ pub fn scan_kicad_processes() -> Vec<PathBuf> {
 
         for arg in cmd {
             let arg_str = arg.to_string_lossy();
-            if arg_str.ends_with(".kicad_pro") {
-                let pro_path = PathBuf::from(arg_str.as_ref());
-                if let Some(parent) = pro_path.parent() {
+            let matches = KICAD_PROJECT_EXTENSIONS
+                .iter()
+                .any(|ext| arg_str.ends_with(*ext));
+            if matches {
+                let path = PathBuf::from(arg_str.as_ref());
+                if let Some(parent) = path.parent() {
                     let dir = parent.to_path_buf();
                     if !project_dirs.contains(&dir) {
                         project_dirs.push(dir);
@@ -55,9 +67,12 @@ pub fn extract_project_dirs_from_args(args_lists: &[Vec<String>]) -> Vec<PathBuf
 
     for args in args_lists {
         for arg in args {
-            if arg.ends_with(".kicad_pro") {
-                let pro_path = PathBuf::from(arg);
-                if let Some(parent) = pro_path.parent() {
+            let matches = KICAD_PROJECT_EXTENSIONS
+                .iter()
+                .any(|ext| arg.ends_with(*ext));
+            if matches {
+                let path = PathBuf::from(arg);
+                if let Some(parent) = path.parent() {
                     let dir = parent.to_path_buf();
                     if !project_dirs.contains(&dir) {
                         project_dirs.push(dir);
@@ -103,10 +118,29 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_ignores_non_kicad_pro() {
+    fn test_extract_kicad_sch_and_pcb() {
+        // .kicad_sch and .kicad_pcb also map to the project directory.
+        let args = vec![
+            vec![
+                "eeschema".to_string(),
+                "/project/schematic.kicad_sch".to_string(),
+            ],
+            vec![
+                "pcbnew".to_string(),
+                "/project/board.kicad_pcb".to_string(),
+            ],
+        ];
+        let dirs = extract_project_dirs_from_args(&args);
+        // Both resolve to the same parent directory — should be deduped.
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0], PathBuf::from("/project"));
+    }
+
+    #[test]
+    fn test_extract_ignores_non_kicad_files() {
         let args = vec![vec![
             "kicad".to_string(),
-            "/project/schematic.kicad_sch".to_string(),
+            "/project/readme.txt".to_string(),
         ]];
         let dirs = extract_project_dirs_from_args(&args);
         assert!(dirs.is_empty());

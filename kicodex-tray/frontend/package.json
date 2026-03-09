@@ -1,0 +1,21 @@
+{
+  "name": "kicodex-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5",
+    "svelte": "^5",
+    "vite": "^6",
+    "tailwindcss": "^4",
+    "daisyui": "^5",
+    "@tailwindcss/vite": "^4"
+  }
+}

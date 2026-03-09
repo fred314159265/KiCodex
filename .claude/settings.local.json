@@ -27,7 +27,13 @@
       "Bash(cargo check:*)",
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:bossanova.uk)",
-      "WebFetch(domain:jspreadsheet.com)"
+      "WebFetch(domain:jspreadsheet.com)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(dd:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

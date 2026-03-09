@@ -606,7 +606,7 @@ pub fn add_http_lib_entry(
     let table_path = project_dir.join("sym-lib-table");
     let uri = format!("${{KIPRJMOD}}/.kicodex/{}.kicad_httplib", name);
     let entry = format!(
-        "  (lib (name \"{name}\")(type \"KiCad HTTP Library\")\
+        "  (lib (name \"{name}\")(type \"HTTP\")\
          (uri \"{uri}\")(options \"\")(descr \"{description}\"))"
     );
 
@@ -843,7 +843,7 @@ mod tests {
         assert!(result, "should return true when creating new file");
         let content = std::fs::read_to_string(dir.path().join("sym-lib-table")).unwrap();
         assert!(content.contains("(name \"MyLib\")"));
-        assert!(content.contains("KiCad HTTP Library"));
+        assert!(content.contains("(type \"HTTP\")"));
         assert!(content.contains("MyLib.kicad_httplib"));
     }
 

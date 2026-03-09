@@ -25,7 +25,7 @@ pub async fn get_parts_by_category(
         .iter()
         .map(|row| {
             let id = row.get("id").cloned().unwrap_or_default();
-            let name = row.get("mpn").or_else(|| row.get("value")).cloned().unwrap_or_default();
+            let name = display_name_from_row(row);
             let description = row.get("description").cloned().unwrap_or_default();
             PartSummary {
                 id,
@@ -55,6 +55,42 @@ pub async fn get_part_detail(
     }
 
     Err(StatusCode::NOT_FOUND)
+}
+
+/// Columns that should not be used as a fallback display name.
+const NON_NAME_COLUMNS: &[&str] = &[
+    "id",
+    "symbol",
+    "exclude_from_bom",
+    "exclude_from_board",
+    "exclude_from_sim",
+    "description",
+];
+
+/// Pick a display name for a part row.
+///
+/// Preference order: `mpn` → `value` → first other non-special non-empty field → `id`.
+/// Empty string values are skipped so that an unpopulated `mpn` column doesn't
+/// shadow a populated `value` column.
+fn display_name_from_row(row: &indexmap::IndexMap<String, String>) -> String {
+    // Prefer mpn, then value (skip empties)
+    for key in &["mpn", "value"] {
+        if let Some(v) = row.get(*key).filter(|s| !s.is_empty()) {
+            return v.clone();
+        }
+    }
+    // Fallback: first non-special column with a non-empty value
+    for (k, v) in row {
+        if !NON_NAME_COLUMNS.contains(&k.as_str())
+            && k != "mpn"
+            && k != "value"
+            && !v.is_empty()
+        {
+            return v.clone();
+        }
+    }
+    // Last resort: id
+    row.get("id").cloned().unwrap_or_default()
 }
 
 /// Special CSV columns that map to top-level API fields (not included in `fields` dict).
@@ -115,7 +151,7 @@ fn exclude_flag(row: &IndexMap<String, String>, field: &str, schema_default: boo
 
 fn build_part_detail(row: &IndexMap<String, String>, schema: &ResolvedSchema) -> PartDetail {
     let id = row.get("id").cloned().unwrap_or_default();
-    let name = row.get("mpn").or_else(|| row.get("value")).cloned().unwrap_or_default();
+    let name = display_name_from_row(row);
     let symbol_id_str = row.get("symbol").cloned().unwrap_or_default();
 
     let mut fields = IndexMap::new();

@@ -60,6 +60,16 @@ pub fn register_in_kicad_lib_table(
 }
 
 #[tauri::command]
+pub fn is_project_active_in_kicad(
+    state: State<'_, AppState>,
+    project_path: String,
+) -> bool {
+    let active = state.active_projects.lock().unwrap();
+    let target = std::path::Path::new(&project_path);
+    active.iter().any(|ap| ap.project_path == target)
+}
+
+#[tauri::command]
 pub fn get_kicad_lib_table_names(project_path: String) -> Result<Vec<String>, String> {
     let project_dir = std::path::Path::new(&project_path);
     Ok(kicodex_core::data::kicad_libs::sym_lib_table_names(project_dir))
@@ -420,6 +430,7 @@ pub fn validate_library(
                 errors.push(ValidationIssue {
                     row: None,
                     id: None,
+                    field: Some(field_name.clone()),
                     message: format!(
                         "required field '{}' is missing from CSV columns",
                         field_name
@@ -439,6 +450,7 @@ pub fn validate_library(
                 errors.push(ValidationIssue {
                     row: Some(row_num),
                     id: Some(row_id.clone()),
+                    field: Some("id".to_string()),
                     message: format!("duplicate id '{}'", row_id),
                 });
             }
@@ -451,6 +463,7 @@ pub fn validate_library(
                     errors.push(ValidationIssue {
                         row: Some(row_num),
                         id: Some(row_id.clone()),
+                        field: Some(field_name.clone()),
                         message: format!(
                             "required field '{}' is empty",
                             field_def.display_name
@@ -470,6 +483,7 @@ pub fn validate_library(
                         let issue = ValidationIssue {
                             row: Some(row_num),
                             id: Some(row_id.clone()),
+                            field: Some(field_name.clone()),
                             message: format!(
                                 "field '{}' has invalid {} format '{}' (expected 'Library:Name')",
                                 field_def.display_name,
@@ -500,6 +514,7 @@ pub fn validate_library(
                                 let issue = ValidationIssue {
                                     row: Some(row_num),
                                     id: Some(row_id.clone()),
+                                    field: Some(field_name.clone()),
                                     message: format!(
                                         "{} library '{}' not found in lib tables",
                                         kind, lib
@@ -515,6 +530,7 @@ pub fn validate_library(
                                 let issue = ValidationIssue {
                                     row: Some(row_num),
                                     id: Some(row_id.clone()),
+                                    field: Some(field_name.clone()),
                                     message: format!(
                                         "{} '{}' not found in library '{}'",
                                         kind, entry, lib
@@ -539,6 +555,7 @@ pub fn validate_library(
                     let issue = ValidationIssue {
                         row: Some(row_num),
                         id: Some(row_id.clone()),
+                        field: Some(field_name.clone()),
                         message: format!(
                             "field '{}' has invalid URL '{}' (must start with http:// or https://)",
                             field_def.display_name, value
@@ -588,6 +605,8 @@ pub fn init_project(
     let port = state.port;
 
     let mut count = 0;
+    let project_path_str = project_dir.to_string_lossy().to_string();
+
     for lib_ref in &config.libraries {
         let library_path = project_dir.join(&lib_ref.path);
         let library_path = library_path
@@ -597,40 +616,34 @@ pub fn init_project(
         let library =
             kicodex_core::server::load_library(&library_path).map_err(|e| e.to_string())?;
 
-        let token = uuid::Uuid::new_v4().to_string();
+        // Reuse existing token if already registered, otherwise generate a new one
+        let existing = persisted.projects.iter().find(|p| {
+            p.project_path.as_deref() == Some(project_path_str.as_str())
+                && p.name == lib_ref.name
+        });
+        let token = match existing {
+            Some(e) => e.token.clone(),
+            None => uuid::Uuid::new_v4().to_string(),
+        };
         let description = library.description.clone();
-        let fallback = format!("KiCodex HTTP Library for {}", lib_ref.name);
-        let desc_str = description.as_deref().unwrap_or(&fallback);
 
         persisted.upsert(kicodex_core::registry::ProjectEntry {
             token: token.clone(),
-            project_path: Some(project_dir.to_string_lossy().to_string()),
+            project_path: Some(project_path_str.clone()),
             library_path: library_path.to_string_lossy().to_string(),
             name: lib_ref.name.clone(),
             description: description.clone(),
         });
 
-        // Write .kicad_httplib in the .kicodex/ subdirectory
-        let kicodex_dir = project_dir.join(".kicodex");
-        std::fs::create_dir_all(&kicodex_dir).map_err(|e| e.to_string())?;
-        let httplib_path = kicodex_dir.join(format!("{}.kicad_httplib", lib_ref.name));
-        let httplib_content = format!(
-            r#"{{
-    "meta": {{
-        "version": 1.0
-    }},
-    "name": "{}",
-    "description": "{}",
-    "source": {{
-        "type": "REST_API",
-        "api_version": "v1",
-        "root_url": "http://127.0.0.1:{port}",
-        "token": "{token}"
-    }}
-}}"#,
-            lib_ref.name, desc_str
-        );
-        std::fs::write(&httplib_path, &httplib_content).map_err(|e| e.to_string())?;
+        // Write .kicad_httplib via shared function
+        kicodex_core::discovery::auto_register::ensure_httplib_file(
+            &project_dir,
+            &lib_ref.name,
+            description.as_deref(),
+            &token,
+            port,
+        )
+        .map_err(|e| e.to_string())?;
 
         // Insert into runtime registry
         state.registry.insert(&token, library);
@@ -1237,6 +1250,29 @@ pub fn list_kicad_entries(
 }
 
 #[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(format!("Not a valid http/https URL: {}", url));
+    }
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "", &url])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_in_explorer(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
     if !p.exists() {
@@ -1335,63 +1371,75 @@ pub fn add_project(
     let mut count = 0;
     let mut httplib_paths = Vec::new();
 
+    let project_path_str = project_dir.to_string_lossy().to_string();
+
     for lib in &libraries {
-        if !lib.is_new {
-            continue;
-        }
         let library_path = project_dir.join(&lib.path);
         let library_path = library_path
             .canonicalize()
             .unwrap_or_else(|_| library_path.clone());
 
-        let library =
-            kicodex_core::server::load_library(&library_path).map_err(|e| e.to_string())?;
+        let (token, desc_str) = if lib.is_new {
+            // New library: load, generate token, register
+            let library =
+                kicodex_core::server::load_library(&library_path).map_err(|e| e.to_string())?;
 
-        let token = uuid::Uuid::new_v4().to_string();
-        let description = library.description.clone();
-        let fallback = format!("KiCodex HTTP Library for {}", lib.name);
-        let desc_str = description.as_deref().unwrap_or(&fallback);
+            let token = uuid::Uuid::new_v4().to_string();
+            let description = library.description.clone();
+            let fallback = format!("KiCodex HTTP Library for {}", lib.name);
+            let desc_str = description
+                .as_deref()
+                .unwrap_or(&fallback)
+                .to_string();
 
-        persisted.upsert(kicodex_core::registry::ProjectEntry {
-            token: token.clone(),
-            project_path: Some(project_dir.to_string_lossy().to_string()),
-            library_path: library_path.to_string_lossy().to_string(),
-            name: lib.name.clone(),
-            description: description.clone(),
-        });
+            persisted.upsert(kicodex_core::registry::ProjectEntry {
+                token: token.clone(),
+                project_path: Some(project_path_str.clone()),
+                library_path: library_path.to_string_lossy().to_string(),
+                name: lib.name.clone(),
+                description: description.clone(),
+            });
 
-        // Write .kicad_httplib in the .kicodex/ subdirectory of the project
-        let kicodex_dir = project_dir.join(".kicodex");
-        std::fs::create_dir_all(&kicodex_dir).map_err(|e| e.to_string())?;
-        let httplib_path = kicodex_dir.join(format!("{}.kicad_httplib", lib.name));
-        let httplib_content = format!(
-            r#"{{
-    "meta": {{
-        "version": 1.0
-    }},
-    "name": "{}",
-    "description": "{}",
-    "source": {{
-        "type": "REST_API",
-        "api_version": "v1",
-        "root_url": "http://127.0.0.1:{port}",
-        "token": "{token}"
-    }}
-}}"#,
-            lib.name, desc_str
-        );
-        std::fs::write(&httplib_path, &httplib_content).map_err(|e| e.to_string())?;
+            // Insert into runtime registry
+            state.registry.insert(&token, library);
+            count += 1;
 
+            (token, desc_str)
+        } else {
+            // Existing library: look up token from persisted registry
+            let entry = persisted.projects.iter().find(|p| {
+                p.project_path.as_deref() == Some(project_path_str.as_str())
+                    && p.name == lib.name
+            });
+            match entry {
+                Some(e) => {
+                    let fallback = format!("KiCodex HTTP Library for {}", lib.name);
+                    let desc = e.description.as_deref().unwrap_or(&fallback).to_string();
+                    (e.token.clone(), desc)
+                }
+                None => continue, // not registered at all, skip
+            }
+        };
+
+        // Always ensure .kicad_httplib has the correct token
+        kicodex_core::discovery::auto_register::ensure_httplib_file(
+            &project_dir,
+            &lib.name,
+            Some(&desc_str),
+            &token,
+            port,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let httplib_path = project_dir
+            .join(".kicodex")
+            .join(format!("{}.kicad_httplib", lib.name));
         let clean_httplib = httplib_path
             .to_string_lossy()
             .strip_prefix(r"\\?\")
             .unwrap_or(&httplib_path.to_string_lossy())
             .to_string();
         httplib_paths.push(clean_httplib);
-
-        // Insert into runtime registry
-        state.registry.insert(&token, library);
-        count += 1;
     }
 
     persisted.save(&registry_path).map_err(|e| e.to_string())?;

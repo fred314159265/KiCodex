@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.kicodex.tray",
   "build": {
-    "frontendDist": "frontend/"
+    "frontendDist": "frontend/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm install && npm run dev",
+    "beforeBuildCommand": "npm install && npm run build"
   },
   "app": {
     "withGlobalTauri": true,

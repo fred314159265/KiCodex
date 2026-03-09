@@ -566,6 +566,66 @@ It should be a helpful warning, not a hard block — components with missing sym
 can still be served via the HTTP API; KiCad will show its own error when the user
 tries to place them.
 
+## Development Setup
+
+### Prerequisites
+
+- **Rust** (stable) — install via [rustup](https://rustup.rs/)
+- **Node.js 20+** — install via [nvm](https://github.com/nvm-sh/nvm) or the official installer
+- **Tauri CLI v2** — install once:
+  ```
+  cargo install tauri-cli --version "^2"
+  ```
+- **Linux only** — system packages required:
+  ```
+  sudo apt-get install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+  ```
+
+### Running the Tray App (dev mode)
+
+```
+cd kicodex-tray
+cargo tauri dev
+```
+
+This starts Vite on port 5173 and launches the Tauri window with hot-reload.
+Frontend source is in `kicodex-tray/frontend/src/`.
+
+### Running the Frontend Only
+
+```
+cd kicodex-tray/frontend
+npm install
+npm run dev
+```
+
+Access at http://localhost:5173 (limited without Tauri IPC).
+
+### Building for Release
+
+```
+cd kicodex-tray
+cargo tauri build
+```
+
+Bundles are written to `target/release/bundle/`.
+
+### CLI Only
+
+```
+cargo build --release -p kicodex-cli
+```
+
+Binary at `target/release/kicodex` (or `kicodex.exe` on Windows).
+
+### Running Tests
+
+```
+cargo test --workspace
+```
+
+---
+
 ## Development Guidelines
 
 - The core library (`kicodex-core`) must be independent of Tauri and usable in
